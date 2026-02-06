@@ -48,13 +48,14 @@ async def read_para_categories(
 @router.get("/search", response_model=List[schemas.ParaSearchResult])
 async def search_para_products(
     q: str = Query(..., description="Search query (name or SKU)"),
-    limit: int = Query(10, description="Maximum number of results")
+    limit: int = Query(10, description="Maximum number of results"),
+    shop: Optional[str] = Query(None, description="Filter by shop name")
 ):
-    """Search PARA products by name or SKU for autocomplete"""
+    """Search PARA products by name or SKU for autocomplete, optionally filtered by shop"""
     try:
         if len(q) < 2:
             return []
-        results = await service.search_para_products(q, limit)
+        results = await service.search_para_products(q, limit, shop)
         return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -55,13 +55,14 @@ async def read_low_categories():
 @router.get("/search", response_model=List[schemas.SearchResult])
 async def search_products(
     q: str = Query(..., description="Search query (name or SKU)"),
-    limit: int = Query(10, description="Maximum number of results")
+    limit: int = Query(10, description="Maximum number of results"),
+    shop: Optional[str] = Query(None, description="Filter by shop name")
 ):
-    """Search products by name or SKU for autocomplete"""
+    """Search products by name or SKU for autocomplete, optionally filtered by shop"""
     try:
         if len(q) < 2:
             return []
-        results = await service.search_products(q, limit)
+        results = await service.search_products(q, limit, shop)
         return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -222,8 +222,8 @@ async def get_product_by_sku(sku: str) -> Optional[Product]:
     return None
 
 
-async def search_products(query: str, limit: int = 10) -> List[SearchResult]:
-    """Search products by name or SKU for autocomplete"""
+async def search_products(query: str, limit: int = 10, shop: Optional[str] = None) -> List[SearchResult]:
+    """Search products by name or SKU for autocomplete, optionally filtered by shop"""
     db = get_database()
     client = db.client
     
@@ -235,23 +235,38 @@ async def search_products(query: str, limit: int = 10) -> List[SearchResult]:
     
     # Search merged_products first (priority)
     collection = client["Retails"]["merged_products"]
-    cursor = collection.find({
+    
+    match_query = {
         "$or": [
             {"title": regex_pattern},
             {"sku": regex_pattern}
         ]
-    }).limit(limit)
+    }
+    
+    if shop:
+        match_query[f"shops.{shop}"] = {"$exists": True}
+
+    cursor = collection.find(match_query).limit(limit)
     
     async for p in cursor:
         sku = p.get("sku")
         if sku and sku not in seen_skus:
             seen_skus.add(sku)
             product = parse_product(p)
+            
+            # If filtering by shop, use that shop's price
+            price = product.bestPrice
+            if shop and p.get("shops") and p["shops"].get(shop) and p["shops"][shop].get("price"):
+                try:
+                    price = float(p["shops"][shop]["price"])
+                except:
+                    pass
+            
             results.append(SearchResult(
                 id=product.id,
                 name=product.name,
                 brand=product.brand,
-                bestPrice=product.bestPrice,
+                bestPrice=price,
                 image=product.image,
                 inStock=product.inStock
             ))
@@ -259,11 +274,18 @@ async def search_products(query: str, limit: int = 10) -> List[SearchResult]:
     # If we need more results, search individual shop collections
     if len(results) < limit:
         remaining = limit - len(results)
-        for shop_name, collection_name in [
+        
+        shop_collections = [
             ("mytek", "mytek_details"),
             ("spacenet", "spacenet_details"),
             ("tunisianet", "tunisianet_details")
-        ]:
+        ]
+        
+        # If shop filter is active, only search that shop's collection
+        if shop:
+            shop_collections = [s for s in shop_collections if s[0] == shop]
+
+        for shop_name, collection_name in shop_collections:
             if len(results) >= limit:
                 break
             

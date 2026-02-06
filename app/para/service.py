@@ -226,8 +226,8 @@ async def get_para_product_by_sku(sku: str) -> Optional[ParaProduct]:
     return None
 
 
-async def search_para_products(query: str, limit: int = 10) -> List[ParaSearchResult]:
-    """Search PARA products by name or SKU for autocomplete"""
+async def search_para_products(query: str, limit: int = 10, shop: Optional[str] = None) -> List[ParaSearchResult]:
+    """Search PARA products by name or SKU for autocomplete, optionally filtered by shop"""
     para_db = get_para_database()
     
     results = []
@@ -237,23 +237,38 @@ async def search_para_products(query: str, limit: int = 10) -> List[ParaSearchRe
     
     # Search merged_products first
     collection = para_db["merged_products"]
-    cursor = collection.find({
+    
+    match_query = {
         "$or": [
             {"title": regex_pattern},
             {"sku": regex_pattern}
         ]
-    }).limit(limit)
+    }
+    
+    if shop:
+        match_query[f"shops.{shop}"] = {"$exists": True}
+
+    cursor = collection.find(match_query).limit(limit)
     
     async for p in cursor:
         sku = p.get("sku")
         if sku and sku not in seen_skus:
             seen_skus.add(sku)
             product = parse_para_product(p)
+            
+            # If filtering by shop, use that shop's price
+            price = product.bestPrice
+            if shop and p.get("shops") and p["shops"].get(shop) and p["shops"][shop].get("price"):
+                try:
+                    price = float(p["shops"][shop]["price"])
+                except:
+                    pass
+            
             results.append(ParaSearchResult(
                 id=product.id,
                 name=product.name,
                 brand=product.brand,
-                bestPrice=product.bestPrice,
+                bestPrice=price,
                 image=product.image,
                 inStock=product.inStock
             ))
@@ -261,7 +276,15 @@ async def search_para_products(query: str, limit: int = 10) -> List[ParaSearchRe
     # Search individual shop collections if needed
     if len(results) < limit:
         remaining = limit - len(results)
-        for shop_collection in ["parashop_details", "pharma-shop_details", "parafendri_details"]:
+        
+        shop_collections = ["parashop_details", "pharma-shop_details", "parafendri_details"]
+        
+        # If shop filter is active, only search that shop's collection (by checking if collection name starts with shop)
+        if shop:
+            # e.g. shop='parashop' matches 'parashop_details'
+            shop_collections = [s for s in shop_collections if s.startswith(shop)]
+            
+        for shop_collection in shop_collections:
             if len(results) >= limit:
                 break
             
@@ -277,8 +300,8 @@ async def search_para_products(query: str, limit: int = 10) -> List[ParaSearchRe
                 sku = p.get("sku")
                 if sku and sku not in seen_skus:
                     seen_skus.add(sku)
-                    shop = shop_collection.replace("_details", "")
-                    product = parse_single_para_shop_product(p, shop)
+                    shop_name = shop_collection.replace("_details", "")
+                    product = parse_single_para_shop_product(p, shop_name)
                     results.append(ParaSearchResult(
                         id=product.id,
                         name=product.name,
