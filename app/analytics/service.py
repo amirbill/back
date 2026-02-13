@@ -8,6 +8,15 @@ from app.analytics.schemas import (
     DetailedAnalyticsResponse
 )
 
+# Mapping for shop name normalization (DB name → canonical name)
+SHOP_NAME_MAP = {
+    "oxtek": "technopro",
+}
+
+def normalize_shop_name(name: str) -> str:
+    """Normalize shop names to handle renames (e.g., oxtek → technopro)"""
+    return SHOP_NAME_MAP.get(name.lower(), name)
+
 async def get_shop_prices() -> List[ShopAnalytics]:
     db = get_database()
     client = db.client
@@ -21,13 +30,15 @@ async def get_shop_prices() -> List[ShopAnalytics]:
             if isinstance(raw_shops, list):
                 for shop in raw_shops:
                     name = shop.get("shop_name") or shop.get("name") or "Unknown"
+                    name = normalize_shop_name(name)
                     avg_price = shop.get("average_price", 0.0)
                     extracted.append(ShopAnalytics(name=name, average_price=avg_price))
             elif isinstance(raw_shops, dict):
                 for name, data in raw_shops.items():
                     if isinstance(data, dict):
+                        normalized_name = normalize_shop_name(name)
                         avg_price = data.get("average_price", 0.0)
-                        extracted.append(ShopAnalytics(name=name, average_price=avg_price))
+                        extracted.append(ShopAnalytics(name=normalized_name, average_price=avg_price))
         return extracted
 
     # Fetch from Retails (E-commerce)
@@ -63,8 +74,13 @@ async def get_merge_stats() -> MergeStatsResponse:
             doc_para = await client["PARA"]["merged_analytics"].find_one()
             if doc_para and "merge_stats" in doc_para:
                 merge_stats = doc_para["merge_stats"]
-                # Extract shop totals dynamically
-                shop_totals = {k: v for k, v in merge_stats.items() if k.endswith("_total")}
+                # Extract shop totals dynamically, normalizing shop names
+                shop_totals = {}
+                for k, v in merge_stats.items():
+                    if k.endswith("_total"):
+                        prefix = k.rsplit("_total", 1)[0]
+                        normalized = normalize_shop_name(prefix)
+                        shop_totals[f"{normalized}_total"] = v
                 common_products = merge_stats.get("common_products", 0)
                 para_stats = MergeStats(shop_totals=shop_totals, common_products=common_products)
     except Exception as e:
@@ -76,8 +92,13 @@ async def get_merge_stats() -> MergeStatsResponse:
             doc_retails = await client["Retails"]["merged_analytics"].find_one()
             if doc_retails and "merge_stats" in doc_retails:
                 merge_stats = doc_retails["merge_stats"]
-                # Extract shop totals dynamically
-                shop_totals = {k: v for k, v in merge_stats.items() if k.endswith("_total")}
+                # Extract shop totals dynamically, normalizing shop names
+                shop_totals = {}
+                for k, v in merge_stats.items():
+                    if k.endswith("_total"):
+                        prefix = k.rsplit("_total", 1)[0]
+                        normalized = normalize_shop_name(prefix)
+                        shop_totals[f"{normalized}_total"] = v
                 common_products = merge_stats.get("common_products", 0)
                 retails_stats = MergeStats(shop_totals=shop_totals, common_products=common_products)
     except Exception as e:
@@ -104,7 +125,7 @@ async def get_detailed_shop_analytics() -> DetailedAnalyticsResponse:
                     for shop_name, shop_data in shops.items():
                         if isinstance(shop_data, dict):
                             para_shops.append(ShopDetailedAnalytics(
-                                name=shop_name,
+                                name=normalize_shop_name(shop_name),
                                 product_count=shop_data.get("product_count", 0),
                                 available_count=shop_data.get("available_count", 0),
                                 total_price=shop_data.get("total_price", 0.0),
@@ -127,7 +148,7 @@ async def get_detailed_shop_analytics() -> DetailedAnalyticsResponse:
                     for shop_name, shop_data in shops.items():
                         if isinstance(shop_data, dict):
                             retails_shops.append(ShopDetailedAnalytics(
-                                name=shop_name,
+                                name=normalize_shop_name(shop_name),
                                 product_count=shop_data.get("product_count", 0),
                                 available_count=shop_data.get("available_count", 0),
                                 total_price=shop_data.get("total_price", 0.0),

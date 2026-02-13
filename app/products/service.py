@@ -22,10 +22,9 @@ def parse_product(p: dict, default_category: str = "", include_specs: bool = Fal
     shop_prices = []
     specifications = None
     
-    # Collect prices from all shops
-    for shop_name in ["mytek", "spacenet", "tunisianet"]:
-        shop = shops_data.get(shop_name)
-        if shop and shop.get("price"):
+    # Collect prices from ALL shops found in the document (fully dynamic)
+    for shop_name, shop in shops_data.items():
+        if shop and isinstance(shop, dict) and shop.get("price"):
             price = float(shop["price"])
             shop_prices.append(ShopPrice(
                 shop=shop_name.capitalize(),
@@ -47,9 +46,8 @@ def parse_product(p: dict, default_category: str = "", include_specs: bool = Fal
     
     # Get first available image (skip spacenet livraison image)
     image_url = "/placeholder.svg"
-    for shop_name in ["mytek", "tunisianet", "spacenet"]:
-        shop = shops_data.get(shop_name)
-        if shop and shop.get("images") and len(shop["images"]) > 0:
+    for shop_name, shop in shops_data.items():
+        if shop and isinstance(shop, dict) and shop.get("images") and len(shop["images"]) > 0:
             for img in shop["images"]:
                 # Skip spacenet livraison image
                 if "livraison-gratuite" not in img:
@@ -58,11 +56,10 @@ def parse_product(p: dict, default_category: str = "", include_specs: bool = Fal
             if image_url != "/placeholder.svg":
                 break
     
-    # Get brand from first shop
+    # Get brand from first shop that has it
     brand = "Generic"
-    for shop_name in ["mytek", "spacenet", "tunisianet"]:
-        shop = shops_data.get(shop_name)
-        if shop and shop.get("brand"):
+    for shop_name, shop in shops_data.items():
+        if shop and isinstance(shop, dict) and shop.get("brand"):
             brand = shop["brand"].upper()
             break
     
@@ -75,9 +72,8 @@ def parse_product(p: dict, default_category: str = "", include_specs: bool = Fal
     # Get specifications if requested
     if include_specs:
         specifications = {}
-        for shop_name in ["mytek", "spacenet", "tunisianet"]:
-            shop = shops_data.get(shop_name)
-            if shop and shop.get("specifications"):
+        for shop_name, shop in shops_data.items():
+            if shop and isinstance(shop, dict) and shop.get("specifications"):
                 # Merge specifications from all shops
                 for key, value in shop["specifications"].items():
                     if key not in specifications:
@@ -186,7 +182,9 @@ async def get_product_by_id(product_id: str) -> Optional[Product]:
     for shop_name, collection_name in [
         ("mytek", "mytek_details"),
         ("spacenet", "spacenet_details"),
-        ("tunisianet", "tunisianet_details")
+        ("tunisianet", "tunisianet_details"),
+        ("technopro", "technopro_details"),
+        ("darty", "darty_details")
     ]:
         collection = client["Retails"][collection_name]
         product_doc = await collection.find_one({"_id": obj_id})
@@ -212,7 +210,9 @@ async def get_product_by_sku(sku: str) -> Optional[Product]:
     for shop_name, collection_name in [
         ("mytek", "mytek_details"),
         ("spacenet", "spacenet_details"),
-        ("tunisianet", "tunisianet_details")
+        ("tunisianet", "tunisianet_details"),
+        ("technopro", "technopro_details"),
+        ("darty", "darty_details")
     ]:
         collection = client["Retails"][collection_name]
         product_doc = await collection.find_one({"sku": sku})
@@ -278,7 +278,9 @@ async def search_products(query: str, limit: int = 10, shop: Optional[str] = Non
         shop_collections = [
             ("mytek", "mytek_details"),
             ("spacenet", "spacenet_details"),
-            ("tunisianet", "tunisianet_details")
+            ("tunisianet", "tunisianet_details"),
+            ("technopro", "technopro_details"),
+            ("darty", "darty_details")
         ]
         
         # If shop filter is active, only search that shop's collection
