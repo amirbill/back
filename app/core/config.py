@@ -27,7 +27,9 @@ class Settings(BaseSettings):
     
     # Google Auth
     GOOGLE_CLIENT_ID: str
-    
+
+    # Groq API
+    GROQ_API_KEY: str = ""
 
     class Config:
         case_sensitive = True
