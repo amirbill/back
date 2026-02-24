@@ -8,7 +8,7 @@ router = APIRouter()
 
 # Shop lists for each database
 PARA_SHOPS = ["parashop", "pharma-shop", "parafendri"]
-RETAIL_SHOPS = ["mytek", "tunisianet", "spacenet"]
+RETAIL_SHOPS = ["mytek", "tunisianet", "spacenet", "technopro", "darty"]
 
 
 class BagItem(BaseModel):
