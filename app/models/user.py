@@ -14,7 +14,7 @@ class User(BaseModel):
     id: Optional[PyObjectId] = Field(None, alias="_id")
     email: EmailStr
     password_hash: str
-    role: str = "client" # client | admin
+    role: str = "client" # client | admin | superadmin
     full_name: Optional[str] = None
     username: Optional[str] = None
     birthdate: Optional[str] = None
