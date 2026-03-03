@@ -12,6 +12,7 @@ from jose import JWTError, jwt
 import secrets
 import random
 import logging
+import asyncio
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -59,13 +60,17 @@ async def signup(user: UserCreate, db=Depends(get_auth_database)):
         del user_to_insert["_id"]
     await db.users.insert_one(user_to_insert)
     
-    # Send verification email directly (await instead of background task for Render compatibility)
-    try:
-        await send_verification_email(user.email, verification_code)
-    except Exception as e:
-        logger.error(f"Failed to send verification email: {e}")
+    # Fire-and-forget email sending so the response returns immediately
+    asyncio.create_task(_send_verification_safe(user.email, verification_code))
 
     return new_user
+
+async def _send_verification_safe(email: str, code: str):
+    """Send verification email in background, logging any errors"""
+    try:
+        await send_verification_email(email, code)
+    except Exception as e:
+        logger.error(f"Failed to send verification email to {email}: {e}")
 
 @router.get("/test-email")
 async def test_email():
@@ -143,12 +148,9 @@ async def resend_verification(email: str = Body(..., embed=True), db=Depends(get
     
     new_code = str(random.randint(100000, 999999))
     await db.users.update_one({"email": email}, {"$set": {"verification_code": new_code}})
-    try:
-        await send_verification_email(email, new_code)
-    except Exception as e:
-        import logging
-        logging.error(f"Failed to resend verification email: {e}")
-        raise HTTPException(status_code=500, detail="Failed to send email")
+    
+    # Fire-and-forget email sending
+    asyncio.create_task(_send_verification_safe(email, new_code))
     return {"message": "Verification code resent"}
 
 @router.post("/forgot-password")

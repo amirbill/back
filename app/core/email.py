@@ -3,6 +3,7 @@ from app.core.config import settings
 from pathlib import Path
 import logging
 import smtplib
+import asyncio
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -30,7 +31,7 @@ def send_email_smtp(to_email: str, subject: str, html_body: str):
     msg.attach(MIMEText(html_body, "html"))
 
     logger.info(f"[smtplib] Connecting to {settings.MAIL_SERVER}:{settings.MAIL_PORT}")
-    with smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=30) as server:
+    with smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=10) as server:
         server.ehlo()
         server.starttls()
         server.ehlo()
