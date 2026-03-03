@@ -2,6 +2,9 @@ from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
 from app.core.config import settings
 from pathlib import Path
 import logging
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 logger = logging.getLogger(__name__)
 
@@ -18,13 +21,26 @@ conf = ConnectionConfig(
     VALIDATE_CERTS=settings.VALIDATE_CERTS
 )
 
+def send_email_smtp(to_email: str, subject: str, html_body: str):
+    """Fallback: send email using smtplib directly"""
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = f"{settings.MAIL_FROM_NAME} <{settings.MAIL_FROM}>"
+    msg["To"] = to_email
+    msg.attach(MIMEText(html_body, "html"))
+
+    logger.info(f"[smtplib] Connecting to {settings.MAIL_SERVER}:{settings.MAIL_PORT}")
+    with smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=30) as server:
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
+        logger.info(f"[smtplib] Logging in as {settings.MAIL_USERNAME}")
+        server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
+        server.sendmail(settings.MAIL_FROM, to_email, msg.as_string())
+        logger.info(f"[smtplib] Email sent successfully to {to_email}")
+
 async def send_verification_email(email: str, code: str):
-    try:
-        logger.info(f"Sending verification email to {email}")
-        message = MessageSchema(
-            subject="1111.tn - Vérification de votre email",
-            recipients=[email],
-            body=f"""<div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background: #f8fafc; border-radius: 16px;">
+    html_body = f"""<div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background: #f8fafc; border-radius: 16px;">
         <div style="text-align: center; margin-bottom: 24px;">
             <h2 style="color: #1e40af; margin: 0;">Bienvenue sur 1111.tn</h2>
         </div>
@@ -33,14 +49,27 @@ async def send_verification_email(email: str, code: str):
             <span style="display: inline-block; font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #2563eb; background: #eff6ff; padding: 16px 32px; border-radius: 12px; border: 2px solid #bfdbfe;">{code}</span>
         </div>
         <p style="color: #64748b; font-size: 13px; text-align: center;">Ce code est valable pendant 30 minutes.<br>Si vous n'avez pas créé de compte, ignorez cet email.</p>
-        </div>""",
+        </div>"""
+
+    # Try fastapi-mail first, fall back to smtplib
+    try:
+        logger.info(f"Sending verification email to {email} via fastapi-mail")
+        message = MessageSchema(
+            subject="1111.tn - Vérification de votre email",
+            recipients=[email],
+            body=html_body,
             subtype=MessageType.html
         )
         fm = FastMail(conf)
         await fm.send_message(message)
-        logger.info(f"Verification email sent successfully to {email}")
+        logger.info(f"Verification email sent successfully to {email} via fastapi-mail")
     except Exception as e:
-        logger.error(f"Failed to send verification email to {email}: {e}")
+        logger.warning(f"fastapi-mail failed for {email}: {e}. Trying smtplib fallback...")
+        try:
+            send_email_smtp(email, "1111.tn - Vérification de votre email", html_body)
+        except Exception as e2:
+            logger.error(f"smtplib also failed for {email}: {e2}")
+            raise e2
 
 async def send_reset_password_email(email: str, code: str):
     message = MessageSchema(

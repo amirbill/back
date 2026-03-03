@@ -5,13 +5,16 @@ from app.models.user import User
 from app.schemas.auth import UserCreate, Token, EmailSchema, PasswordReset, UserLogin, UserProfileUpdate, ChangePassword, GoogleLogin
 from bson import ObjectId
 from app.core.security import get_password_hash, verify_password, create_access_token
-from app.core.email import send_verification_email, send_reset_password_email
+from app.core.email import send_verification_email, send_reset_password_email, send_email_smtp
 from app.core.config import settings
 from datetime import timedelta, datetime
 from jose import JWTError, jwt
 import secrets
 import random
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v1/auth/signin")
@@ -60,10 +63,43 @@ async def signup(user: UserCreate, db=Depends(get_auth_database)):
     try:
         await send_verification_email(user.email, verification_code)
     except Exception as e:
-        import logging
-        logging.error(f"Failed to send verification email: {e}")
+        logger.error(f"Failed to send verification email: {e}")
 
     return new_user
+
+@router.get("/test-email")
+async def test_email():
+    """Diagnostic endpoint to test SMTP connection on Render"""
+    import smtplib
+    results = {
+        "mail_username": settings.MAIL_USERNAME,
+        "mail_server": settings.MAIL_SERVER,
+        "mail_port": settings.MAIL_PORT,
+        "mail_starttls": settings.MAIL_STARTTLS,
+        "mail_ssl_tls": settings.MAIL_SSL_TLS,
+        "password_length": len(settings.MAIL_PASSWORD),
+        "password_has_spaces": " " in settings.MAIL_PASSWORD,
+    }
+    
+    # Test SMTP connection
+    try:
+        server = smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=15)
+        server.ehlo()
+        results["smtp_connect"] = "OK"
+        
+        server.starttls()
+        results["smtp_starttls"] = "OK"
+        
+        server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
+        results["smtp_login"] = "OK"
+        
+        server.quit()
+        results["smtp_quit"] = "OK"
+    except Exception as e:
+        results["smtp_error"] = str(e)
+        results["smtp_error_type"] = type(e).__name__
+    
+    return results
 
 @router.post("/signin", response_model=Token)
 async def signin(user_credentials: UserLogin, db=Depends(get_auth_database)):
