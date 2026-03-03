@@ -45,23 +45,18 @@ async def signup(user: UserCreate, db=Depends(get_auth_database)):
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
     
-    verification_code = str(random.randint(100000, 999999))
     user_dict = user.dict()
     # Force role to be client for public signup
     user_dict["role"] = "client"
     user_dict["password_hash"] = get_password_hash(user.password)
     del user_dict["password"]
-    user_dict["verification_code"] = verification_code
-    user_dict["is_verified"] = False
+    user_dict["is_verified"] = True
     
     new_user = User(**user_dict)
     user_to_insert = new_user.dict(by_alias=True)
     if "_id" in user_to_insert and user_to_insert["_id"] is None:
         del user_to_insert["_id"]
     await db.users.insert_one(user_to_insert)
-    
-    # Fire-and-forget email sending so the response returns immediately
-    asyncio.create_task(_send_verification_safe(user.email, verification_code))
 
     return new_user
 
@@ -114,9 +109,6 @@ async def signin(user_credentials: UserLogin, db=Depends(get_auth_database)):
     
     if not verify_password(user_credentials.password, user["password_hash"]):
         raise HTTPException(status_code=400, detail="Incorrect email or password")
-    
-    if not user.get("is_verified", False):
-         raise HTTPException(status_code=400, detail="Email not verified")
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
