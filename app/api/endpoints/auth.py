@@ -41,14 +41,14 @@ async def signup(user: UserCreate, background_tasks: BackgroundTasks, db=Depends
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
     
-    verification_code = secrets.token_hex(3)
+    verification_code = str(random.randint(100000, 999999))
     user_dict = user.dict()
     # Force role to be client for public signup
     user_dict["role"] = "client"
     user_dict["password_hash"] = get_password_hash(user.password)
     del user_dict["password"]
     user_dict["verification_code"] = verification_code
-    user_dict["is_verified"] = True
+    user_dict["is_verified"] = False
     
     new_user = User(**user_dict)
     user_to_insert = new_user.dict(by_alias=True)
@@ -56,8 +56,8 @@ async def signup(user: UserCreate, background_tasks: BackgroundTasks, db=Depends
         del user_to_insert["_id"]
     await db.users.insert_one(user_to_insert)
     
-    # Verification email removed as per request
-    # background_tasks.add_task(send_verification_email, user.email, verification_code)
+    # Send verification email
+    background_tasks.add_task(send_verification_email, user.email, verification_code)
 
     return new_user
 
@@ -91,6 +91,20 @@ async def verify_email(email: str = Body(...), code: str = Body(...), db=Depends
     
     await db.users.update_one({"email": email}, {"$set": {"is_verified": True, "verification_code": ""}})
     return {"message": "Email verified successfully"}
+
+@router.post("/resend-verification")
+async def resend_verification(background_tasks: BackgroundTasks, email: str = Body(..., embed=True), db=Depends(get_auth_database)):
+    user = await db.users.find_one({"email": email})
+    if not user:
+        raise HTTPException(status_code=400, detail="User not found")
+    
+    if user.get("is_verified", False):
+        raise HTTPException(status_code=400, detail="Email already verified")
+    
+    new_code = str(random.randint(100000, 999999))
+    await db.users.update_one({"email": email}, {"$set": {"verification_code": new_code}})
+    background_tasks.add_task(send_verification_email, email, new_code)
+    return {"message": "Verification code resent"}
 
 @router.post("/forgot-password")
 async def forgot_password(email: EmailSchema, background_tasks: BackgroundTasks, db=Depends(get_auth_database)):

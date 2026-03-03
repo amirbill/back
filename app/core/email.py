@@ -1,6 +1,9 @@
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
 from app.core.config import settings
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 conf = ConnectionConfig(
     MAIL_USERNAME=settings.MAIL_USERNAME,
@@ -16,14 +19,28 @@ conf = ConnectionConfig(
 )
 
 async def send_verification_email(email: str, code: str):
-    message = MessageSchema(
-        subject="Account Verification",
-        recipients=[email],
-        body=f"Your verification code is: {code}",
-        subtype=MessageType.html
-    )
-    fm = FastMail(conf)
-    await fm.send_message(message)
+    try:
+        logger.info(f"Sending verification email to {email}")
+        message = MessageSchema(
+            subject="1111.tn - Vérification de votre email",
+            recipients=[email],
+            body=f"""<div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background: #f8fafc; border-radius: 16px;">
+        <div style="text-align: center; margin-bottom: 24px;">
+            <h2 style="color: #1e40af; margin: 0;">Bienvenue sur 1111.tn</h2>
+        </div>
+        <p style="color: #334155; font-size: 15px;">Votre code de vérification est :</p>
+        <div style="text-align: center; margin: 24px 0;">
+            <span style="display: inline-block; font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #2563eb; background: #eff6ff; padding: 16px 32px; border-radius: 12px; border: 2px solid #bfdbfe;">{code}</span>
+        </div>
+        <p style="color: #64748b; font-size: 13px; text-align: center;">Ce code est valable pendant 30 minutes.<br>Si vous n'avez pas créé de compte, ignorez cet email.</p>
+        </div>""",
+            subtype=MessageType.html
+        )
+        fm = FastMail(conf)
+        await fm.send_message(message)
+        logger.info(f"Verification email sent successfully to {email}")
+    except Exception as e:
+        logger.error(f"Failed to send verification email to {email}: {e}")
 
 async def send_reset_password_email(email: str, code: str):
     message = MessageSchema(
