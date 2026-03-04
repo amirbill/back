@@ -5,7 +5,7 @@ from app.models.user import User
 from app.schemas.auth import UserCreate, Token, EmailSchema, PasswordReset, UserLogin, UserProfileUpdate, ChangePassword, GoogleLogin
 from bson import ObjectId
 from app.core.security import get_password_hash, verify_password, create_access_token
-from app.core.email import send_verification_email, send_reset_password_email, send_email_smtp
+from app.core.email import send_verification_email, send_reset_password_email
 from app.core.config import settings
 from datetime import timedelta, datetime
 from jose import JWTError, jwt
@@ -40,7 +40,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db=Depends(get_a
     return User(**user)
 
 @router.post("/signup", response_model=User)
-async def signup(user: UserCreate, background_tasks: BackgroundTasks, db=Depends(get_auth_database)):
+async def signup(user: UserCreate, db=Depends(get_auth_database)):
     existing_user = await db.users.find_one({"email": user.email})
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -62,9 +62,13 @@ async def signup(user: UserCreate, background_tasks: BackgroundTasks, db=Depends
         del user_to_insert["_id"]
     await db.users.insert_one(user_to_insert)
 
-    # Send verification email via BackgroundTasks (reliable in production)
-    background_tasks.add_task(_send_verification_safe, user.email, verification_code)
-    logger.info(f"Signup complete for {user.email}, verification email queued")
+    # Send verification email directly (await it so errors are visible)
+    try:
+        await send_verification_email(user.email, verification_code)
+        logger.info(f"Verification email sent to {user.email}")
+    except Exception as e:
+        logger.error(f"Failed to send verification email to {user.email}: {e}")
+        # Don't fail signup, user can resend later
 
     return new_user
 
@@ -77,7 +81,7 @@ async def _send_verification_safe(email: str, code: str):
 
 @router.get("/test-email")
 async def test_email():
-    """Diagnostic endpoint to test SMTP connection"""
+    """Diagnostic endpoint — actually tries to send a test email to see if SMTP works"""
     import smtplib as _smtplib
     import ssl as _ssl
     results = {
@@ -87,37 +91,43 @@ async def test_email():
         "mail_starttls": settings.MAIL_STARTTLS,
         "mail_ssl_tls": settings.MAIL_SSL_TLS,
         "mail_from": settings.MAIL_FROM,
-        "mail_from_name": settings.MAIL_FROM_NAME,
+        "validate_certs": settings.VALIDATE_CERTS,
         "password_length": len(settings.MAIL_PASSWORD),
     }
     
-    # Test SMTP connection using SSL (port 465) since that's the configured method
-    if settings.MAIL_SSL_TLS:
-        try:
-            ctx = _ssl.create_default_context()
-            server = _smtplib.SMTP_SSL(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=15, context=ctx)
+    # Test SMTP connection
+    try:
+        context = _ssl.create_default_context()
+        if not settings.VALIDATE_CERTS:
+            context.check_hostname = False
+            context.verify_mode = _ssl.CERT_NONE
+        
+        if settings.MAIL_SSL_TLS:
+            server = _smtplib.SMTP_SSL(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=15, context=context)
             results["smtp_ssl_connect"] = "OK"
-            server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
-            results["smtp_ssl_login"] = "OK"
-            server.quit()
-            results["smtp_ssl_quit"] = "OK"
-        except Exception as e:
-            results["smtp_ssl_error"] = str(e)
-            results["smtp_ssl_error_type"] = type(e).__name__
-    else:
-        try:
+        else:
             server = _smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=15)
             server.ehlo()
-            results["smtp_connect"] = "OK"
-            server.starttls()
+            server.starttls(context=context)
             results["smtp_starttls"] = "OK"
-            server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
-            results["smtp_login"] = "OK"
-            server.quit()
-            results["smtp_quit"] = "OK"
-        except Exception as e:
-            results["smtp_error"] = str(e)
-            results["smtp_error_type"] = type(e).__name__
+        
+        server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
+        results["smtp_login"] = "OK"
+        
+        # Actually send a test email to the sender address
+        from email.mime.text import MIMEText as _MIMEText
+        test_msg = _MIMEText("SMTP test from Render - if you see this, email works!", "plain")
+        test_msg["Subject"] = "1111.tn SMTP Test"
+        test_msg["From"] = settings.MAIL_FROM
+        test_msg["To"] = settings.MAIL_FROM
+        server.sendmail(settings.MAIL_FROM, settings.MAIL_FROM, test_msg.as_string())
+        results["test_email_sent"] = f"OK - sent to {settings.MAIL_FROM}"
+        
+        server.quit()
+        results["smtp_quit"] = "OK"
+    except Exception as e:
+        results["smtp_error"] = str(e)
+        results["smtp_error_type"] = type(e).__name__
     
     return results
 
@@ -157,7 +167,7 @@ async def verify_email(email: str = Body(...), code: str = Body(...), db=Depends
     return {"message": "Email verified successfully"}
 
 @router.post("/resend-verification")
-async def resend_verification(background_tasks: BackgroundTasks, email: str = Body(..., embed=True), db=Depends(get_auth_database)):
+async def resend_verification(email: str = Body(..., embed=True), db=Depends(get_auth_database)):
     user = await db.users.find_one({"email": email})
     if not user:
         raise HTTPException(status_code=400, detail="User not found")
@@ -168,9 +178,12 @@ async def resend_verification(background_tasks: BackgroundTasks, email: str = Bo
     new_code = str(random.randint(100000, 999999))
     await db.users.update_one({"email": email}, {"$set": {"verification_code": new_code}})
     
-    # Use BackgroundTasks (reliable in production)
-    background_tasks.add_task(_send_verification_safe, email, new_code)
-    logger.info(f"Resend verification queued for {email}")
+    # Send email directly (await it)
+    try:
+        await send_verification_email(email, new_code)
+        logger.info(f"Resend verification sent for {email}")
+    except Exception as e:
+        logger.error(f"Failed to resend verification to {email}: {e}")
     return {"message": "Verification code resent"}
 
 @router.post("/forgot-password")
