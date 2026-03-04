@@ -50,25 +50,13 @@ async def signup(user: UserCreate, db=Depends(get_auth_database)):
     user_dict["role"] = "client"
     user_dict["password_hash"] = get_password_hash(user.password)
     del user_dict["password"]
-    user_dict["is_verified"] = False
-    
-    # Generate a 6-digit verification code
-    verification_code = str(random.randint(100000, 999999))
-    user_dict["verification_code"] = verification_code
+    user_dict["is_verified"] = True
     
     new_user = User(**user_dict)
     user_to_insert = new_user.dict(by_alias=True)
     if "_id" in user_to_insert and user_to_insert["_id"] is None:
         del user_to_insert["_id"]
     await db.users.insert_one(user_to_insert)
-
-    # Send verification email directly (await it so errors are visible)
-    try:
-        await send_verification_email(user.email, verification_code)
-        logger.info(f"Verification email sent to {user.email}")
-    except Exception as e:
-        logger.error(f"Failed to send verification email to {user.email}: {e}")
-        # Don't fail signup, user can resend later
 
     return new_user
 
@@ -139,13 +127,6 @@ async def signin(user_credentials: UserLogin, db=Depends(get_auth_database)):
     
     if not verify_password(user_credentials.password, user["password_hash"]):
         raise HTTPException(status_code=400, detail="Incorrect email or password")
-
-    # Block signin if email is not verified
-    if not user.get("is_verified", False):
-        raise HTTPException(
-            status_code=403,
-            detail="Email not verified. Please check your inbox for the verification code."
-        )
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
