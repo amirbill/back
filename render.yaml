@@ -31,7 +31,7 @@ services:
       - key: USE_CREDENTIALS
         value: "True"
       - key: VALIDATE_CERTS
-        value: "True"
+        value: "False"
       - key: AUTH_DB_NAME
         value: "Users"
     healthCheckPath: /api/v1/health

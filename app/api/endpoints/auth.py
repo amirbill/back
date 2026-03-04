@@ -40,7 +40,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db=Depends(get_a
     return User(**user)
 
 @router.post("/signup", response_model=User)
-async def signup(user: UserCreate, db=Depends(get_auth_database)):
+async def signup(user: UserCreate, background_tasks: BackgroundTasks, db=Depends(get_auth_database)):
     existing_user = await db.users.find_one({"email": user.email})
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -62,8 +62,9 @@ async def signup(user: UserCreate, db=Depends(get_auth_database)):
         del user_to_insert["_id"]
     await db.users.insert_one(user_to_insert)
 
-    # Send verification email in background (fire-and-forget)
-    asyncio.create_task(_send_verification_safe(user.email, verification_code))
+    # Use BackgroundTasks (reliable in production, unlike asyncio.create_task)
+    background_tasks.add_task(_send_verification_safe, user.email, verification_code)
+    logger.info(f"Signup complete for {user.email}, verification email queued")
 
     return new_user
 
@@ -144,7 +145,7 @@ async def verify_email(email: str = Body(...), code: str = Body(...), db=Depends
     return {"message": "Email verified successfully"}
 
 @router.post("/resend-verification")
-async def resend_verification(email: str = Body(..., embed=True), db=Depends(get_auth_database)):
+async def resend_verification(background_tasks: BackgroundTasks, email: str = Body(..., embed=True), db=Depends(get_auth_database)):
     user = await db.users.find_one({"email": email})
     if not user:
         raise HTTPException(status_code=400, detail="User not found")
@@ -155,8 +156,9 @@ async def resend_verification(email: str = Body(..., embed=True), db=Depends(get
     new_code = str(random.randint(100000, 999999))
     await db.users.update_one({"email": email}, {"$set": {"verification_code": new_code}})
     
-    # Fire-and-forget email sending
-    asyncio.create_task(_send_verification_safe(email, new_code))
+    # Use BackgroundTasks (reliable in production)
+    background_tasks.add_task(_send_verification_safe, email, new_code)
+    logger.info(f"Resend verification queued for {email}")
     return {"message": "Verification code resent"}
 
 @router.post("/forgot-password")
