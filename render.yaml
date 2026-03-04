@@ -19,19 +19,19 @@ services:
       - key: MAIL_FROM
         sync: false
       - key: MAIL_PORT
-        value: "587"
+        value: "465"
       - key: MAIL_SERVER
-        value: "smtp.gmail.com"
+        value: "cl-t070-530cl.mandm5.com"
       - key: MAIL_FROM_NAME
         value: "1111.tn Support"
       - key: MAIL_STARTTLS
-        value: "True"
-      - key: MAIL_SSL_TLS
         value: "False"
+      - key: MAIL_SSL_TLS
+        value: "True"
       - key: USE_CREDENTIALS
         value: "True"
       - key: VALIDATE_CERTS
-        value: "False"
+        value: "True"
       - key: AUTH_DB_NAME
         value: "Users"
     healthCheckPath: /api/v1/health
