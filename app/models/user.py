@@ -19,6 +19,7 @@ class User(BaseModel):
     username: Optional[str] = None
     birthdate: Optional[str] = None
     address: Optional[str] = None
+    phone: Optional[str] = None
     is_active: bool = True
     is_verified: bool = False
     verification_code: Optional[str] = None

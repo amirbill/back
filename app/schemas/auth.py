@@ -5,6 +5,9 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=64)
     role: str = "client"
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
 
 class UserLogin(BaseModel):
     email: EmailStr
