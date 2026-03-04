@@ -28,9 +28,9 @@ try:
         VALIDATE_CERTS=settings.VALIDATE_CERTS
     )
     HAS_FASTAPI_MAIL = True
-except Exception:
+except Exception as exc:
     HAS_FASTAPI_MAIL = False
-    logger.warning("fastapi-mail not available, using smtplib only")
+    logger.warning(f"fastapi-mail not available ({exc}), using smtplib only")
 
 
 def _build_mime_message(to_email: str, subject: str, html_body: str) -> MIMEMultipart:
@@ -42,11 +42,24 @@ def _build_mime_message(to_email: str, subject: str, html_body: str) -> MIMEMult
     return msg
 
 
-def send_email_smtp_starttls(to_email: str, subject: str, html_body: str):
-    """Send email via SMTP STARTTLS on port 587"""
+def send_email_smtp_ssl(to_email: str, subject: str, html_body: str):
+    """Send email via SMTP_SSL (port 465)"""
     msg = _build_mime_message(to_email, subject, html_body)
-    logger.info(f"[smtplib-STARTTLS] Connecting to {settings.MAIL_SERVER}:587")
-    with smtplib.SMTP(settings.MAIL_SERVER, 587, timeout=30) as server:
+    context = ssl.create_default_context()
+    port = settings.MAIL_PORT if settings.MAIL_SSL_TLS else 465
+    logger.info(f"[smtplib-SSL] Connecting to {settings.MAIL_SERVER}:{port}")
+    with smtplib.SMTP_SSL(settings.MAIL_SERVER, port, timeout=30, context=context) as server:
+        server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
+        server.sendmail(settings.MAIL_FROM, to_email, msg.as_string())
+        logger.info(f"[smtplib-SSL] Email sent to {to_email}")
+
+
+def send_email_smtp_starttls(to_email: str, subject: str, html_body: str):
+    """Send email via SMTP STARTTLS (port 587)"""
+    msg = _build_mime_message(to_email, subject, html_body)
+    port = settings.MAIL_PORT if settings.MAIL_STARTTLS else 587
+    logger.info(f"[smtplib-STARTTLS] Connecting to {settings.MAIL_SERVER}:{port}")
+    with smtplib.SMTP(settings.MAIL_SERVER, port, timeout=30) as server:
         server.ehlo()
         server.starttls()
         server.ehlo()
@@ -55,33 +68,34 @@ def send_email_smtp_starttls(to_email: str, subject: str, html_body: str):
         logger.info(f"[smtplib-STARTTLS] Email sent to {to_email}")
 
 
-def send_email_smtp_ssl(to_email: str, subject: str, html_body: str):
-    """Send email via SMTP SSL on port 465 (fallback when 587 is blocked)"""
-    msg = _build_mime_message(to_email, subject, html_body)
-    context = ssl.create_default_context()
-    logger.info(f"[smtplib-SSL] Connecting to {settings.MAIL_SERVER}:465")
-    with smtplib.SMTP_SSL(settings.MAIL_SERVER, 465, timeout=30, context=context) as server:
-        server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
-        server.sendmail(settings.MAIL_FROM, to_email, msg.as_string())
-        logger.info(f"[smtplib-SSL] Email sent to {to_email}")
-
-
 def send_email_smtp(to_email: str, subject: str, html_body: str):
-    """Send email trying STARTTLS first, then SSL fallback"""
-    # Attempt 1: STARTTLS on port 587
-    try:
-        send_email_smtp_starttls(to_email, subject, html_body)
-        return
-    except Exception as e:
-        logger.warning(f"[smtplib] STARTTLS:587 failed for {to_email}: {e}")
-
-    # Attempt 2: SSL on port 465
-    try:
-        send_email_smtp_ssl(to_email, subject, html_body)
-        return
-    except Exception as e2:
-        logger.error(f"[smtplib] SSL:465 also failed for {to_email}: {e2}")
-        raise e2
+    """Send email using the configured method (SSL or STARTTLS), with fallback"""
+    if settings.MAIL_SSL_TLS:
+        # Server uses SSL (port 465) — try SSL first, then STARTTLS fallback
+        try:
+            send_email_smtp_ssl(to_email, subject, html_body)
+            return
+        except Exception as e:
+            logger.warning(f"[smtplib] SSL:{settings.MAIL_PORT} failed: {e}. Trying STARTTLS...")
+        try:
+            send_email_smtp_starttls(to_email, subject, html_body)
+            return
+        except Exception as e2:
+            logger.error(f"[smtplib] STARTTLS also failed: {e2}")
+            raise e2
+    else:
+        # Server uses STARTTLS (port 587) — try STARTTLS first, then SSL fallback
+        try:
+            send_email_smtp_starttls(to_email, subject, html_body)
+            return
+        except Exception as e:
+            logger.warning(f"[smtplib] STARTTLS:{settings.MAIL_PORT} failed: {e}. Trying SSL...")
+        try:
+            send_email_smtp_ssl(to_email, subject, html_body)
+            return
+        except Exception as e2:
+            logger.error(f"[smtplib] SSL also failed: {e2}")
+            raise e2
 
 
 async def _send_email_in_thread(to_email: str, subject: str, html_body: str):
@@ -95,14 +109,14 @@ async def send_verification_email(email: str, code: str):
         <div style="text-align: center; margin-bottom: 24px;">
             <h2 style="color: #1e40af; margin: 0;">Bienvenue sur 1111.tn</h2>
         </div>
-        <p style="color: #334155; font-size: 15px;">Votre code de vérification est :</p>
+        <p style="color: #334155; font-size: 15px;">Votre code de v\u00e9rification est :</p>
         <div style="text-align: center; margin: 24px 0;">
             <span style="display: inline-block; font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #2563eb; background: #eff6ff; padding: 16px 32px; border-radius: 12px; border: 2px solid #bfdbfe;">{code}</span>
         </div>
-        <p style="color: #64748b; font-size: 13px; text-align: center;">Ce code est valable pendant 30 minutes.<br>Si vous n'avez pas créé de compte, ignorez cet email.</p>
+        <p style="color: #64748b; font-size: 13px; text-align: center;">Ce code est valable pendant 30 minutes.<br>Si vous n'avez pas cr\u00e9\u00e9 de compte, ignorez cet email.</p>
         </div>"""
 
-    subject = "1111.tn - Vérification de votre email"
+    subject = "1111.tn - V\u00e9rification de votre email"
 
     # Try fastapi-mail first (async native)
     if HAS_FASTAPI_MAIL:
@@ -121,7 +135,7 @@ async def send_verification_email(email: str, code: str):
         except Exception as e:
             logger.warning(f"fastapi-mail failed for {email}: {e}. Falling back to smtplib...")
 
-    # Fallback: smtplib in thread pool (STARTTLS then SSL)
+    # Fallback: smtplib in thread pool
     try:
         await _send_email_in_thread(email, subject, html_body)
     except Exception as e2:

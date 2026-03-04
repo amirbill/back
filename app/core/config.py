@@ -13,17 +13,16 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
     # Email Settings
-    MAIL_USERNAME: str = "your_email@example.com"
-    MAIL_PASSWORD: str = "your_password"
-    MAIL_FROM: str = "your_email@example.com"
-    MAIL_PORT: int = 587
-    MAIL_SERVER: str = "smtp.gmail.com"
-    MAIL_FROM_NAME: str = "Your App Name"
-    MAIL_STARTTLS: bool = True
-    MAIL_SSL_TLS: bool = False
+    MAIL_USERNAME: str = "company@1111.tn"
+    MAIL_PASSWORD: str = ""
+    MAIL_FROM: str = "company@1111.tn"
+    MAIL_PORT: int = 465
+    MAIL_SERVER: str = "cl-t070-530cl.mandm5.com"
+    MAIL_FROM_NAME: str = "1111.tn Support"
+    MAIL_STARTTLS: bool = False
+    MAIL_SSL_TLS: bool = True
     USE_CREDENTIALS: bool = True
-    USE_CREDENTIALS: bool = True
-    VALIDATE_CERTS: bool = True
+    VALIDATE_CERTS: bool = False
     
     # Google Auth
     GOOGLE_CLIENT_ID: str

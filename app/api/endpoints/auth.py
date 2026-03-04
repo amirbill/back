@@ -40,7 +40,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db=Depends(get_a
     return User(**user)
 
 @router.post("/signup", response_model=User)
-async def signup(user: UserCreate, db=Depends(get_auth_database)):
+async def signup(user: UserCreate, background_tasks: BackgroundTasks, db=Depends(get_auth_database)):
     existing_user = await db.users.find_one({"email": user.email})
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -50,13 +50,21 @@ async def signup(user: UserCreate, db=Depends(get_auth_database)):
     user_dict["role"] = "client"
     user_dict["password_hash"] = get_password_hash(user.password)
     del user_dict["password"]
-    user_dict["is_verified"] = True
+    user_dict["is_verified"] = False
+    
+    # Generate a 6-digit verification code
+    verification_code = str(random.randint(100000, 999999))
+    user_dict["verification_code"] = verification_code
     
     new_user = User(**user_dict)
     user_to_insert = new_user.dict(by_alias=True)
     if "_id" in user_to_insert and user_to_insert["_id"] is None:
         del user_to_insert["_id"]
     await db.users.insert_one(user_to_insert)
+
+    # Send verification email via BackgroundTasks (reliable in production)
+    background_tasks.add_task(_send_verification_safe, user.email, verification_code)
+    logger.info(f"Signup complete for {user.email}, verification email queued")
 
     return new_user
 
@@ -69,35 +77,47 @@ async def _send_verification_safe(email: str, code: str):
 
 @router.get("/test-email")
 async def test_email():
-    """Diagnostic endpoint to test SMTP connection on Render"""
-    import smtplib
+    """Diagnostic endpoint to test SMTP connection"""
+    import smtplib as _smtplib
+    import ssl as _ssl
     results = {
         "mail_username": settings.MAIL_USERNAME,
         "mail_server": settings.MAIL_SERVER,
         "mail_port": settings.MAIL_PORT,
         "mail_starttls": settings.MAIL_STARTTLS,
         "mail_ssl_tls": settings.MAIL_SSL_TLS,
+        "mail_from": settings.MAIL_FROM,
+        "mail_from_name": settings.MAIL_FROM_NAME,
         "password_length": len(settings.MAIL_PASSWORD),
-        "password_has_spaces": " " in settings.MAIL_PASSWORD,
     }
     
-    # Test SMTP connection
-    try:
-        server = smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=15)
-        server.ehlo()
-        results["smtp_connect"] = "OK"
-        
-        server.starttls()
-        results["smtp_starttls"] = "OK"
-        
-        server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
-        results["smtp_login"] = "OK"
-        
-        server.quit()
-        results["smtp_quit"] = "OK"
-    except Exception as e:
-        results["smtp_error"] = str(e)
-        results["smtp_error_type"] = type(e).__name__
+    # Test SMTP connection using SSL (port 465) since that's the configured method
+    if settings.MAIL_SSL_TLS:
+        try:
+            ctx = _ssl.create_default_context()
+            server = _smtplib.SMTP_SSL(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=15, context=ctx)
+            results["smtp_ssl_connect"] = "OK"
+            server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
+            results["smtp_ssl_login"] = "OK"
+            server.quit()
+            results["smtp_ssl_quit"] = "OK"
+        except Exception as e:
+            results["smtp_ssl_error"] = str(e)
+            results["smtp_ssl_error_type"] = type(e).__name__
+    else:
+        try:
+            server = _smtplib.SMTP(settings.MAIL_SERVER, settings.MAIL_PORT, timeout=15)
+            server.ehlo()
+            results["smtp_connect"] = "OK"
+            server.starttls()
+            results["smtp_starttls"] = "OK"
+            server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
+            results["smtp_login"] = "OK"
+            server.quit()
+            results["smtp_quit"] = "OK"
+        except Exception as e:
+            results["smtp_error"] = str(e)
+            results["smtp_error_type"] = type(e).__name__
     
     return results
 
@@ -109,6 +129,13 @@ async def signin(user_credentials: UserLogin, db=Depends(get_auth_database)):
     
     if not verify_password(user_credentials.password, user["password_hash"]):
         raise HTTPException(status_code=400, detail="Incorrect email or password")
+
+    # Block signin if email is not verified
+    if not user.get("is_verified", False):
+        raise HTTPException(
+            status_code=403,
+            detail="Email not verified. Please check your inbox for the verification code."
+        )
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
