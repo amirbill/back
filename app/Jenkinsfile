@@ -1,6 +1,11 @@
 pipeline {
     agent any
 
+    triggers {
+        // This makes Jenkins respond to GitHub push events
+        githubPush()
+    }
+
     stages {
 
         stage('Checkout') {
