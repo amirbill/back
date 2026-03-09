@@ -12,7 +12,7 @@ async def get_categories() -> List[str]:
         categories = await client["Retails"]["merged_products"].distinct("subcategory")
         return sorted([c for c in categories if c])
     except Exception as e:
-        print(f"Error fetching categoriesss: {e}")
+        print(f"Error fetching categories: {e}")
         return []
 
 
