@@ -118,6 +118,19 @@ async def get_category_analytics(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.get("/fake-promos/list")
+async def get_fake_promos(
+    limit: int = Query(10, ge=1, le=500, description="Number of fake promo products to return")
+):
+    """Get fake promo products from fake_promos collection"""
+    try:
+        promos = await service.get_fake_promos(limit=limit)
+        return promos
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/{product_id}", response_model=schemas.Product)
 async def get_product_by_id(product_id: str):
     """Get a single product by ID with full specifications"""

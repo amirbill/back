@@ -177,29 +177,52 @@ async def get_para_random_products(
 
 
 async def get_para_product_by_id(product_id: str) -> Optional[ParaProduct]:
-    """Fetch a single PARA product by MongoDB ID"""
+    """Fetch a single PARA product by MongoDB ID or SKU"""
     from bson import ObjectId
-    try:
-        obj_id = ObjectId(product_id)
-    except:
-        return None
-        
+    
     para_db = get_para_database()
     
-    # First try merged_products
-    collection = para_db["merged_products"]
-    product_doc = await collection.find_one({"_id": obj_id})
+    shop_collections = ["parashop_details", "pharma-shop_details", "parafendri_details"]
     
+    # 1. Try by ObjectId
+    try:
+        obj_id = ObjectId(product_id)
+        
+        # First try merged_products
+        collection = para_db["merged_products"]
+        product_doc = await collection.find_one({"_id": obj_id})
+        
+        if product_doc:
+            return parse_para_product(product_doc, include_specs=True)
+        
+        # If not found, try individual shop collections
+        for shop_name in shop_collections:
+            collection = para_db[shop_name]
+            product_doc = await collection.find_one({"_id": obj_id})
+            if product_doc:
+                shop = shop_name.replace("_details", "")
+                return parse_single_para_shop_product(product_doc, shop)
+    except:
+        pass
+    
+    # 2. Fallback: try by SKU
+    collection = para_db["merged_products"]
+    product_doc = await collection.find_one({"sku": product_id})
     if product_doc:
         return parse_para_product(product_doc, include_specs=True)
     
-    # If not found, try individual shop collections
-    for shop_name in ["parashop_details", "pharma-shop_details", "parafendri_details"]:
+    for shop_name in shop_collections:
         collection = para_db[shop_name]
-        product_doc = await collection.find_one({"_id": obj_id})
+        product_doc = await collection.find_one({"sku": product_id})
         if product_doc:
             shop = shop_name.replace("_details", "")
             return parse_single_para_shop_product(product_doc, shop)
+    
+    # 3. Fallback: try by string _id
+    collection = para_db["merged_products"]
+    product_doc = await collection.find_one({"_id": product_id})
+    if product_doc:
+        return parse_para_product(product_doc, include_specs=True)
     
     return None
 

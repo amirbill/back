@@ -135,7 +135,7 @@ def parse_single_shop_product(p: dict, shop_name: str) -> Product:
 
 
 async def get_random_products(category: str, category_type: str = "subcategory", limit: int = 10) -> List[Product]:
-    """Fetch random products from merged_products by subcategory or low_category"""
+    """Fetch random products from merged_products by subcategory or low_category, with title fallback"""
     db = get_database()
     client = db.client
     collection = client["Retails"]["merged_products"]
@@ -154,6 +154,15 @@ async def get_random_products(category: str, category_type: str = "subcategory",
     cursor = collection.aggregate(pipeline)
     raw_products = await cursor.to_list(length=actual_limit)
     
+    # Fallback: if no products found by category field, search by title
+    if not raw_products:
+        fallback_pipeline = [
+            {"$match": {"title": {"$regex": category, "$options": "i"}}},
+            {"$sample": {"size": actual_limit}}
+        ]
+        cursor = collection.aggregate(fallback_pipeline)
+        raw_products = await cursor.to_list(length=actual_limit)
+    
     # Map to Product schema
     products = [parse_product(p, category) for p in raw_products]
     
@@ -161,35 +170,59 @@ async def get_random_products(category: str, category_type: str = "subcategory",
 
 
 async def get_product_by_id(product_id: str) -> Optional[Product]:
-    """Fetch a single product by its MongoDB ID with full specifications"""
+    """Fetch a single product by its MongoDB ID or SKU with full specifications"""
     from bson import ObjectId
-    try:
-        obj_id = ObjectId(product_id)
-    except:
-        return None
-        
+    
     db = get_database()
     client = db.client
     
-    # First try merged_products
-    collection = client["Retails"]["merged_products"]
-    product_doc = await collection.find_one({"_id": obj_id})
-    
-    if product_doc:
-        return parse_product(product_doc, include_specs=True)
-    
-    # If not found, try individual shop collections
-    for shop_name, collection_name in [
+    # List of all shop collections to search
+    shop_collections = [
         ("mytek", "mytek_details"),
         ("spacenet", "spacenet_details"),
         ("tunisianet", "tunisianet_details"),
         ("technopro", "technopro_details"),
-        ("darty", "darty_details")
-    ]:
-        collection = client["Retails"][collection_name]
+        ("darty", "darty_details"),
+        ("jumbo", "jumbo_details"),
+    ]
+    
+    # 1. Try by ObjectId
+    try:
+        obj_id = ObjectId(product_id)
+        
+        # First try merged_products
+        collection = client["Retails"]["merged_products"]
         product_doc = await collection.find_one({"_id": obj_id})
+        
+        if product_doc:
+            return parse_product(product_doc, include_specs=True)
+        
+        # If not found, try individual shop collections
+        for shop_name, collection_name in shop_collections:
+            collection = client["Retails"][collection_name]
+            product_doc = await collection.find_one({"_id": obj_id})
+            if product_doc:
+                return parse_single_shop_product(product_doc, shop_name)
+    except:
+        pass
+    
+    # 2. Fallback: try by SKU
+    collection = client["Retails"]["merged_products"]
+    product_doc = await collection.find_one({"sku": product_id})
+    if product_doc:
+        return parse_product(product_doc, include_specs=True)
+    
+    for shop_name, collection_name in shop_collections:
+        collection = client["Retails"][collection_name]
+        product_doc = await collection.find_one({"sku": product_id})
         if product_doc:
             return parse_single_shop_product(product_doc, shop_name)
+    
+    # 3. Fallback: try by string _id (some collections store _id as string)
+    collection = client["Retails"]["merged_products"]
+    product_doc = await collection.find_one({"_id": product_id})
+    if product_doc:
+        return parse_product(product_doc, include_specs=True)
     
     return None
 
@@ -212,7 +245,8 @@ async def get_product_by_sku(sku: str) -> Optional[Product]:
         ("spacenet", "spacenet_details"),
         ("tunisianet", "tunisianet_details"),
         ("technopro", "technopro_details"),
-        ("darty", "darty_details")
+        ("darty", "darty_details"),
+        ("jumbo", "jumbo_details"),
     ]:
         collection = client["Retails"][collection_name]
         product_doc = await collection.find_one({"sku": sku})
@@ -280,7 +314,8 @@ async def search_products(query: str, limit: int = 10, shop: Optional[str] = Non
             ("spacenet", "spacenet_details"),
             ("tunisianet", "tunisianet_details"),
             ("technopro", "technopro_details"),
-            ("darty", "darty_details")
+            ("darty", "darty_details"),
+            ("jumbo", "jumbo_details"),
         ]
         
         # If shop filter is active, only search that shop's collection
@@ -505,3 +540,90 @@ async def get_category_analytics(category: str) -> Optional[CategoryAnalytics]:
     except Exception as e:
         print(f"Error fetching category analytics: {e}")
         return None
+
+
+async def get_fake_promos(limit: int = 10) -> List[Dict[str, Any]]:
+    """Fetch fake promo products from fake_promos collection, balanced across shops"""
+    db = get_database()
+    client = db.client
+    
+    try:
+        coll = client["Retails"]["fake_promos"]
+        
+        # Get distinct shops, then sample evenly from each
+        shops = await coll.distinct("shop", {"direction": "fake_promo"})
+        per_shop = max(3, (limit + len(shops) - 1) // len(shops)) if shops else limit
+        
+        results = []
+        for shop in shops:
+            cursor = coll.find(
+                {"direction": "fake_promo", "shop": shop},
+                {
+                    "_id": 1,
+                    "title": 1,
+                    "brand": 1,
+                    "shop": 1,
+                    "images": 1,
+                    "url": 1,
+                    "old_scrap_price": 1,
+                    "old_scrap_old_price": 1,
+                    "new_scrap_price": 1,
+                    "new_scrap_old_price": 1,
+                    "price_change": 1,
+                    "price_change_pct": 1,
+                    "real_increase": 1,
+                    "real_increase_pct": 1,
+                    "old_price_inflated_by": 1,
+                    "old_price_inflated_by_pct": 1,
+                    "advertised_discount": 1,
+                    "advertised_discount_pct": 1,
+                    "verdict": 1,
+                    "top_category": 1,
+                    "subcategory": 1,
+                    "_updated_at": 1,
+                }
+            ).sort("old_price_inflated_by_pct", -1).limit(per_shop)
+            
+            async for doc in cursor:
+                # Get product image, skip spacenet livraison placeholder
+                image = "/placeholder.svg"
+                images = doc.get("images", [])
+                for img in images:
+                    if img and "livraison-gratuite" not in img:
+                        image = img
+                        break
+                
+                results.append({
+                    "id": str(doc["_id"]),
+                    "title": doc.get("title", "Produit"),
+                    "brand": doc.get("brand", ""),
+                    "shop": doc.get("shop", ""),
+                    "image": image,
+                    "url": doc.get("url", ""),
+                    "old_scrap_old_price": doc.get("old_scrap_old_price", 0),
+                    "old_scrap_price": doc.get("old_scrap_price", 0),
+                    "new_scrap_price": doc.get("new_scrap_price", 0),
+                    "new_scrap_old_price": doc.get("new_scrap_old_price", 0),
+                    "old_price_inflated_by": doc.get("old_price_inflated_by", 0),
+                    "old_price_inflated_by_pct": doc.get("old_price_inflated_by_pct", 0),
+                    "advertised_discount": doc.get("advertised_discount", 0),
+                    "advertised_discount_pct": doc.get("advertised_discount_pct", 0),
+                    "real_increase_pct": doc.get("real_increase_pct", 0),
+                    "category": doc.get("subcategory", doc.get("top_category", "")),
+                })
+        
+        # Interleave shops: round-robin so cards alternate between shops
+        from itertools import zip_longest
+        by_shop = {}
+        for r in results:
+            by_shop.setdefault(r["shop"], []).append(r)
+        interleaved = []
+        for group in zip_longest(*by_shop.values()):
+            for item in group:
+                if item is not None:
+                    interleaved.append(item)
+        
+        return interleaved[:limit]
+    except Exception as e:
+        print(f"Error fetching fake promos: {e}")
+        return []
