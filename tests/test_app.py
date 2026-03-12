@@ -318,6 +318,40 @@ class TestProductEndpoints:
         assert resp.status_code == 200
         assert resp.json() == []
 
+
+# ---------------------------------------------------------------------------
+# 5. MongoDB helper function tests
+# ---------------------------------------------------------------------------
+
+class TestMongoHelpers:
+    """Test get_database and get_auth_database helpers (not mocked by autouse)."""
+
+    def test_get_database_returns_mock_client_result(self):
+        from unittest.mock import MagicMock
+        from app.db.mongodb import get_database, db
+
+        # autouse mock_mongo patches db → db.client is a MagicMock
+        # get_database() just returns db.client[db.db_name]
+        result = get_database()
+        assert result is not None  # MagicMock subscript returns a MagicMock
+
+    def test_get_auth_database_returns_mock_client_result(self):
+        from app.db.mongodb import get_auth_database
+        result = get_auth_database()
+        assert result is not None
+
+    def test_get_database_uses_db_name(self):
+        from app.db.mongodb import get_database, db
+        get_database()
+        # Verify db.client was subscripted (accessed with a key)
+        db.client.__getitem__.assert_called()
+
+    def test_get_auth_database_uses_auth_db_name(self):
+        from app.core.config import settings
+        from app.db.mongodb import get_auth_database, db
+        get_auth_database()
+        db.client.__getitem__.assert_called_with(settings.AUTH_DB_NAME)
+
     @patch("app.products.service.search_products", new_callable=AsyncMock)
     def test_search_products_valid(self, mock_search, client):
         mock_search.return_value = [
