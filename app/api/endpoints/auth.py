@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Body, BackgroundT
 from fastapi.security import OAuth2PasswordBearer
 from app.db.mongodb import get_auth_database
 from app.models.user import User
-from app.schemas.auth import UserCreate, Token, EmailSchema, PasswordReset, UserLogin, UserProfileUpdate, ChangePassword, GoogleLogin
+from app.schemas.auth import UserCreate, Token, EmailSchema, PasswordReset, UserLogin, UserProfileUpdate, ChangePassword, GoogleLogin, UserResponse
 from bson import ObjectId
 from app.core.security import get_password_hash, verify_password, create_access_token
 from app.core.email import send_verification_email, send_reset_password_email
@@ -39,8 +39,8 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db=Depends(get_a
         raise credentials_exception
     return User(**user)
 
-@router.post("/signup", response_model=User)
-async def signup(user: UserCreate, db=Depends(get_auth_database)):
+@router.post("/signup", response_model=UserResponse)
+async def signup(user: UserCreate, background_tasks: BackgroundTasks, db=Depends(get_auth_database)):
     existing_user = await db.users.find_one({"email": user.email})
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -50,13 +50,20 @@ async def signup(user: UserCreate, db=Depends(get_auth_database)):
     user_dict["role"] = "client"
     user_dict["password_hash"] = get_password_hash(user.password)
     del user_dict["password"]
-    user_dict["is_verified"] = True
+
+    # Generate a 6-digit verification code and require email verification
+    verification_code = str(random.randint(100000, 999999))
+    user_dict["is_verified"] = False
+    user_dict["verification_code"] = verification_code
     
     new_user = User(**user_dict)
     user_to_insert = new_user.dict(by_alias=True)
     if "_id" in user_to_insert and user_to_insert["_id"] is None:
         del user_to_insert["_id"]
     await db.users.insert_one(user_to_insert)
+
+    # Send verification email in background so the response returns immediately
+    background_tasks.add_task(_send_verification_safe, user.email, verification_code)
 
     return new_user
 
@@ -128,6 +135,9 @@ async def signin(user_credentials: UserLogin, db=Depends(get_auth_database)):
     if not verify_password(user_credentials.password, user["password_hash"]):
         raise HTTPException(status_code=400, detail="Incorrect email or password")
 
+    if not user.get("is_verified", False):
+        raise HTTPException(status_code=403, detail="Email not verified. Please check your inbox for the verification code.")
+
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         subject=user["email"], expires_delta=access_token_expires
@@ -145,7 +155,17 @@ async def verify_email(email: str = Body(...), code: str = Body(...), db=Depends
         raise HTTPException(status_code=400, detail="Invalid verification code")
     
     await db.users.update_one({"email": email}, {"$set": {"is_verified": True, "verification_code": ""}})
-    return {"message": "Email verified successfully"}
+
+    # Return a token so the user is auto-logged-in after verification
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(subject=email, expires_delta=access_token_expires)
+
+    return {
+        "message": "Email verified successfully",
+        "access_token": access_token,
+        "token_type": "bearer",
+        "role": user.get("role", "client"),
+    }
 
 @router.post("/resend-verification")
 async def resend_verification(email: str = Body(..., embed=True), db=Depends(get_auth_database)):
@@ -209,11 +229,11 @@ async def reset_password(reset_data: PasswordReset, db=Depends(get_auth_database
     )
     return {"message": "Password reset successfully"}
 
-@router.get("/me", response_model=User)
+@router.get("/me", response_model=UserResponse)
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
 
-@router.put("/profile", response_model=User)
+@router.put("/profile", response_model=UserResponse)
 async def update_profile(
     profile_data: UserProfileUpdate,
     current_user: User = Depends(get_current_user),

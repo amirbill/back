@@ -44,3 +44,19 @@ class ChangePassword(BaseModel):
 class GoogleLogin(BaseModel):
     credential: str
 
+class UserResponse(BaseModel):
+    id: Optional[str] = Field(None, alias="_id")
+    email: EmailStr
+    role: str = "client"
+    full_name: Optional[str] = None
+    username: Optional[str] = None
+    birthdate: Optional[str] = None
+    address: Optional[str] = None
+    phone: Optional[str] = None
+    is_active: bool = True
+    is_verified: bool = False
+    google_id: Optional[str] = None
+    picture: Optional[str] = None
+
+    model_config = {"populate_by_name": True}
+
