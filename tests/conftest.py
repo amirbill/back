@@ -8,6 +8,20 @@ os.environ.setdefault("GOOGLE_CLIENT_ID", "test-google-client-id")
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-unit-tests")
 os.environ.setdefault("GROQ_API_KEY", "test-groq-key")
 
+# ── httpx ≥ 0.28 compatibility shim ──────────────────────────────────────────
+# starlette 0.35.x calls httpx.Client.__init__(app=...) which was removed in
+# httpx 0.28.  Patch it out silently so TestClient still works.
+import httpx as _httpx
+_orig_httpx_init = _httpx.Client.__init__
+
+
+def _httpx_compat_init(self, *args, app=None, **kwargs):  # noqa: ANN001
+    _orig_httpx_init(self, *args, **kwargs)
+
+
+_httpx.Client.__init__ = _httpx_compat_init
+# ─────────────────────────────────────────────────────────────────────────────
+
 from fastapi.testclient import TestClient
 
 
