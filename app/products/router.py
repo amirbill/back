@@ -7,10 +7,10 @@ router = APIRouter()
 @router.get("/random", response_model=List[schemas.Product])
 async def read_random_products(
     category: str = Query(..., description="Category value to filter products"),
-    category_type: str = Query("subcategory", description="Category field: 'subcategory' or 'low_category'"),
+    category_type: str = Query("subcategory", description="Category field: 'top_category', 'subcategory' or 'low_category'"),
     limit: int = Query(10, description="Number of products to return (max 10)")
 ):
-    """Get random products by category (subcategory or low_category)"""
+    """Get random products by category (subcategory or low_category or top_category)"""
     try:
         products = await service.get_random_products(
             category=category, 
@@ -52,6 +52,15 @@ async def read_low_categories():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/top-categories", response_model=List[str])
+async def read_top_categories():
+    """Get all distinct top_categories from merged_products"""
+    try:
+        categories = await service.get_top_categories()
+        return categories
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/search", response_model=List[schemas.SearchResult])
 async def search_products(
     q: str = Query(..., description="Search query (name or SKU)"),
@@ -70,7 +79,7 @@ async def search_products(
 @router.get("/listing", response_model=schemas.ProductListResponse)
 async def get_products_listing(
     category: Optional[str] = Query(None, description="Category to filter by"),
-    category_type: str = Query("subcategory", description="Category field: 'subcategory' or 'low_category'"),
+    category_type: str = Query("subcategory", description="Category field: 'top_category', 'subcategory' or 'low_category'"),
     search: Optional[str] = Query(None, description="Search term"),
     min_price: Optional[float] = Query(None, description="Minimum price filter"),
     max_price: Optional[float] = Query(None, description="Maximum price filter"),

@@ -3,6 +3,68 @@ from typing import List, Optional, Dict, Any, Tuple
 from app.products.schemas import Product, ShopPrice, ProductListResponse, SearchResult, ShopRanking, CategoryAnalytics
 import re
 
+TOP_CATEGORY_MAPPING = {
+    "Audio, Hifi, Casque": "TV / Photo / Son",
+    "BUREAUTIQUE": "Bureautique",
+    "Beauté & Santé": "Beauté & Santé",
+    "Beauté et Santé": "Beauté & Santé",
+    "Beauté, Bien-être": "Beauté & Santé",
+    "Beauté, Forme et Santé": "Beauté & Santé",
+    "Beauté, forme et santé": "Beauté & Santé",
+    "Bureautique": "Bureautique",
+    "BÉBÉ": "Bébé",
+    "Cadeau": "Loisirs",
+    "Chauffage": "Maison & Brico",
+    "Chauffage et Climatisation": "Maison & Brico",
+    "Electroménager": "Électroménager",
+    "GAMING": "Gaming",
+    "Gaming": "Gaming",
+    "Gros Électroménager": "Électroménager",
+    "Gros électroménager": "Électroménager",
+    "IMPRESSION": "Bureautique",
+    "INFORMATIQUE": "Informatique",
+    "Impression": "Bureautique",
+    "Informatique": "Informatique",
+    "Informatique et Gaming": "Informatique",
+    "Informatique et tablette": "Informatique",
+    "JEUX & JOUETS": "Loisirs",
+    "Loisirs": "Loisirs",
+    "MAISON | BRICO & ANIMALERIE": "Maison & Brico",
+    "MODE BEAUTÉ & SANTÉ": "Beauté & Santé",
+    "MOTO | SPORTS & LOISIRS": "Sports & Loisirs",
+    "Maison & Brico": "Maison & Brico",
+    "Maison Connectée": "Maison & Brico",
+    "Maison et Mode": "Maison & Brico",
+    "Maison, Jardin & Brico": "Maison & Brico",
+    "Meuble": "Maison & Brico",
+    "Moto | Sport & Loisirs": "Sports & Loisirs",
+    "PETIT Électroménager": "Électroménager",
+    "Petit électroménager": "Électroménager",
+    "RESEAUX & SECURITE": "Réseaux & Sécurité",
+    "Repassage du linge": "Électroménager",
+    "Réseau & Connectiques": "Réseaux & Sécurité",
+    "Réseaux-Sécurité": "Réseaux & Sécurité",
+    "Smartphone, Objets connectés": "Téléphonie & Objets connectés",
+    "Son & Image": "TV / Photo / Son",
+    "Sport & Loisir": "Sports & Loisirs",
+    "Sports et loisirs": "Sports & Loisirs",
+    "Sécurité": "Réseaux & Sécurité",
+    "Sécurité & Réseaux": "Réseaux & Sécurité",
+    "TELEPHONIE & MONTRE CONNECTÉE": "Téléphonie & Objets connectés",
+    "TV Home Cinéma et Barre de Son": "TV / Photo / Son",
+    "TV | PHOTO & SON": "TV / Photo / Son",
+    "TV | Photo & Son": "TV / Photo / Son",
+    "TV-Image-Son": "TV / Photo / Son",
+    "TV-Son-Photo": "TV / Photo / Son",
+    "TV-Son-Photos": "TV / Photo / Son",
+    "Téléphonie": "Téléphonie & Objets connectés",
+    "Téléphonie et Montres Connectées": "Téléphonie & Objets connectés",
+    "Téléphonie, Objets connectés": "Téléphonie & Objets connectés",
+    "Téléphonie, montre connectée et accessoires": "Téléphonie & Objets connectés",
+    "ÉLECTROMENAGER": "Électroménager",
+    "Électroménager": "Électroménager"
+}
+
 async def get_categories() -> List[str]:
     """Fetch distinct subcategories from merged_products collection"""
     db = get_database()
@@ -143,11 +205,17 @@ async def get_random_products(category: str, category_type: str = "subcategory",
     # Build aggregation pipeline - limit to max 10
     actual_limit = min(limit, 10)
     
-    # Match by either subcategory or low_category
-    match_field = category_type if category_type in ["subcategory", "low_category"] else "subcategory"
-    
+    # Match by subcategory, low_category, or top_category
+    match_field = category_type if category_type in ["subcategory", "low_category", "top_category"] else "subcategory"
+
+    match_condition = category
+    if match_field == "top_category":
+        raw_cats = [k for k, v in TOP_CATEGORY_MAPPING.items() if v == category]
+        if raw_cats:
+            match_condition = {"$in": raw_cats}
+
     pipeline = [
-        {"$match": {match_field: category}},
+        {"$match": {match_field: match_condition}},
         {"$sample": {"size": actual_limit}}
     ]
     
@@ -371,9 +439,17 @@ async def get_products_listing(
     # 1. Base Match Stage
     match_stage = {}
     if category:
-        match_field = category_type if category_type in ["subcategory", "low_category"] else "subcategory"
-        match_stage[match_field] = category
-    
+        match_field = category_type if category_type in ["subcategory", "low_category", "top_category"] else "subcategory"
+        
+        if match_field == "top_category":
+            raw_cats = [k for k, v in TOP_CATEGORY_MAPPING.items() if v == category]
+            if raw_cats:
+                match_stage[match_field] = {"$in": raw_cats}
+            else:
+                match_stage[match_field] = category
+        else:
+            match_stage[match_field] = category
+
     if search:
         regex_pattern = {"$regex": search, "$options": "i"}
         match_stage["$or"] = [
@@ -494,6 +570,12 @@ async def get_all_low_categories() -> List[str]:
     except Exception as e:
         print(f"Error fetching low_categories: {e}")
         return []
+
+async def get_top_categories() -> List[str]:
+    """Fetch distinct top_categories from merged_products collection"""
+    # Return unique canonical categories from the mapping
+    clean_categories = set(TOP_CATEGORY_MAPPING.values())
+    return sorted(list(clean_categories))
 
 
 async def get_analytics_categories() -> List[str]:
