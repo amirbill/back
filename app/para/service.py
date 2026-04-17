@@ -1,6 +1,8 @@
 from app.db.mongodb import db
 from typing import List, Optional, Dict, Any
+import re
 from app.para.schemas import ParaProduct, ShopPrice, ParaProductListResponse, ParaSearchResult, ShopRanking, CategoryAnalytics
+from app.search_utils import get_search_terms, score_search_match
 
 # PARA shops list
 PARA_SHOPS = ["parashop", "pharma-shop", "parafendri"]
@@ -252,91 +254,142 @@ async def get_para_product_by_sku(sku: str) -> Optional[ParaProduct]:
 async def search_para_products(query: str, limit: int = 10, shop: Optional[str] = None) -> List[ParaSearchResult]:
     """Search PARA products by name or SKU for autocomplete, optionally filtered by shop"""
     para_db = get_para_database()
-    
-    results = []
-    seen_skus = set()
-    
-    regex_pattern = {"$regex": query, "$options": "i"}
-    
-    # Search merged_products first
-    collection = para_db["merged_products"]
-    
-    match_query = {
-        "$or": [
-            {"title": regex_pattern},
-            {"sku": regex_pattern}
-        ]
-    }
-    
-    if shop:
-        match_query[f"shops.{shop}"] = {"$exists": True}
 
-    cursor = collection.find(match_query).limit(limit)
-    
-    async for p in cursor:
-        sku = p.get("sku")
-        if sku and sku not in seen_skus:
-            seen_skus.add(sku)
-            product = parse_para_product(p)
-            
-            # If filtering by shop, use that shop's price
-            price = product.bestPrice
-            if shop and p.get("shops") and p["shops"].get(shop) and p["shops"][shop].get("price"):
-                try:
-                    price = float(p["shops"][shop]["price"])
-                except:
-                    pass
-            
-            results.append(ParaSearchResult(
-                id=product.id,
-                name=product.name,
-                brand=product.brand,
-                bestPrice=price,
-                image=product.image,
-                inStock=product.inStock
-            ))
-    
-    # Search individual shop collections if needed
-    if len(results) < limit:
-        remaining = limit - len(results)
-        
-        shop_collections = ["parashop_details", "pharma-shop_details", "parafendri_details"]
-        
-        # If shop filter is active, only search that shop's collection (by checking if collection name starts with shop)
+    normalized_query = query.strip()
+    search_terms = get_search_terms(normalized_query)
+
+    def build_match_query() -> Dict[str, Any]:
+        regexes = [{"$regex": re.escape(term), "$options": "i"} for term in search_terms]
+        if not regexes:
+            regexes = [{"$regex": re.escape(normalized_query), "$options": "i"}]
+
+        match_query: Dict[str, Any] = {
+            "$or": [{field: regex} for regex in regexes for field in ["title", "sku", "low_category", "top_category"]]
+        }
+
         if shop:
-            # e.g. shop='parashop' matches 'parashop_details'
-            shop_collections = [s for s in shop_collections if s.startswith(shop)]
-            
+            match_query[f"shops.{shop}"] = {"$exists": True}
+
+        return match_query
+
+    candidate_rows: list[dict] = []
+    seen_skus: set[str] = set()
+
+    collection = para_db["merged_products"]
+    cursor = collection.find(build_match_query()).limit(max(limit * 8, 40))
+
+    async for product_doc in cursor:
+        sku = product_doc.get("sku")
+        if sku and sku in seen_skus:
+            continue
+        if sku:
+            seen_skus.add(sku)
+
+        product = parse_para_product(product_doc)
+        price = product.bestPrice
+        if shop and product_doc.get("shops") and product_doc["shops"].get(shop) and product_doc["shops"][shop].get("price"):
+            try:
+                price = float(product_doc["shops"][shop]["price"])
+            except Exception:
+                pass
+
+        candidate_rows.append({
+            "id": product.id,
+            "name": product.name,
+            "brand": product.brand,
+            "bestPrice": price,
+            "image": product.image,
+            "inStock": product.inStock,
+            "relevance": score_search_match(
+                normalized_query,
+                title=str(product_doc.get("title", "")),
+                sku=str(product_doc.get("sku", "")),
+                brand=str(product_doc.get("brand", "")),
+                category=str(product_doc.get("low_category", "")) or str(product_doc.get("top_category", "")),
+            ),
+        })
+
+    if not candidate_rows:
+        broad_collection = para_db["merged_products"]
+        cursor = broad_collection.find({}).limit(max(limit * 20, 200))
+
+        async for product_doc in cursor:
+            sku = product_doc.get("sku")
+            if sku and sku in seen_skus:
+                continue
+            if sku:
+                seen_skus.add(sku)
+
+            product = parse_para_product(product_doc)
+            candidate_rows.append({
+                "id": product.id,
+                "name": product.name,
+                "brand": product.brand,
+                "bestPrice": product.bestPrice,
+                "image": product.image,
+                "inStock": product.inStock,
+                "relevance": score_search_match(
+                    normalized_query,
+                    title=product.name,
+                    sku=str(product_doc.get("sku", "")),
+                    brand=product.brand,
+                    category=str(product_doc.get("low_category", "")) or str(product_doc.get("top_category", "")),
+                ),
+            })
+
+    if len(candidate_rows) < limit:
+        shop_collections = ["parashop_details", "pharma-shop_details", "parafendri_details"]
+        if shop:
+            shop_collections = [item for item in shop_collections if item.startswith(shop)]
+
+        secondary_query: Dict[str, Any] = {
+            "$or": [{field: {"$regex": re.escape(term), "$options": "i"}} for term in search_terms for field in ["title", "sku", "brand"]]
+        }
+
         for shop_collection in shop_collections:
-            if len(results) >= limit:
+            if len(candidate_rows) >= max(limit * 6, 40):
                 break
-            
+
             collection = para_db[shop_collection]
-            cursor = collection.find({
-                "$or": [
-                    {"title": regex_pattern},
-                    {"sku": regex_pattern}
-                ]
-            }).limit(remaining)
-            
-            async for p in cursor:
-                sku = p.get("sku")
-                if sku and sku not in seen_skus:
+            cursor = collection.find(secondary_query).limit(max(limit * 6, 40))
+
+            async for product_doc in cursor:
+                sku = product_doc.get("sku")
+                if sku and sku in seen_skus:
+                    continue
+                if sku:
                     seen_skus.add(sku)
-                    shop_name = shop_collection.replace("_details", "")
-                    product = parse_single_para_shop_product(p, shop_name)
-                    results.append(ParaSearchResult(
-                        id=product.id,
-                        name=product.name,
-                        brand=product.brand,
-                        bestPrice=product.bestPrice,
-                        image=product.image,
-                        inStock=product.inStock
-                    ))
-                    if len(results) >= limit:
-                        break
-    
-    return results[:limit]
+
+                shop_name = shop_collection.replace("_details", "")
+                product = parse_single_para_shop_product(product_doc, shop_name)
+                candidate_rows.append({
+                    "id": product.id,
+                    "name": product.name,
+                    "brand": product.brand,
+                    "bestPrice": product.bestPrice,
+                    "image": product.image,
+                    "inStock": product.inStock,
+                    "relevance": score_search_match(
+                        normalized_query,
+                        title=str(product_doc.get("title", "")),
+                        sku=str(product_doc.get("sku", "")),
+                        brand=str(product_doc.get("brand", "")),
+                        category=str(product_doc.get("low_category", "")) or str(product_doc.get("top_category", "")),
+                    ),
+                })
+
+    deduped_rows: list[dict] = []
+    seen_ids: set[str] = set()
+    for candidate in sorted(candidate_rows, key=lambda item: (item.get("relevance", 0.0), -item.get("bestPrice", 0.0)), reverse=True):
+        candidate_id = candidate["id"]
+        if candidate_id in seen_ids:
+            continue
+        seen_ids.add(candidate_id)
+        deduped_rows.append(candidate)
+        if len(deduped_rows) >= limit:
+            break
+
+    return [ParaSearchResult(**row) for row in deduped_rows]
 
 
 async def get_para_products_listing(

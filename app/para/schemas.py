@@ -36,6 +36,7 @@ class ParaSearchResult(BaseModel):
     bestPrice: float
     image: str
     inStock: bool
+    relevance: Optional[float] = None
 
 # Analytics schemas for category price comparison
 class ShopRanking(BaseModel):

@@ -284,36 +284,67 @@ async def change_password(
 async def google_login(login_data: GoogleLogin, db=Depends(get_auth_database)):
     from google.oauth2 import id_token
     from google.auth.transport import requests as google_requests
-
-    try:
-        # Verify the token
-        id_info = id_token.verify_oauth2_token(
-            login_data.credential, 
-            google_requests.Request(), 
-            settings.GOOGLE_CLIENT_ID
-        )
-
-        email = id_info['email']
-        google_id = id_info['sub']
-        picture = id_info.get('picture')
-        name = id_info.get('name')
-        
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid Google token: {str(e)}")
-
+    import httpx
+    credential = (login_data.credential or "").strip()
+    if not credential:
+        raise HTTPException(status_code=400, detail="Missing Google credential")
+    email = None
+    google_id = None
+    picture = None
+    name = None
+    # 1) Try as ID token (JWT) first
+    # JWT عادة فيها 3 parties séparées par '.'
+    if credential.count(".") == 2:
+        try:
+            id_info = id_token.verify_oauth2_token(
+                credential,
+                google_requests.Request(),
+                settings.GOOGLE_CLIENT_ID,  # Web client id conseillé ici
+            )
+            email = id_info.get("email")
+            google_id = id_info.get("sub")
+            picture = id_info.get("picture")
+            name = id_info.get("name")
+        except ValueError:
+            # fallback to access_token flow
+            pass
+    # 2) Fallback: treat credential as access_token
+    if not email:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    "https://www.googleapis.com/oauth2/v3/userinfo",
+                    headers={"Authorization": f"Bearer {credential}"},
+                )
+            if resp.status_code != 200:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid Google credential (userinfo status={resp.status_code})",
+                )
+            userinfo = resp.json()
+            email = userinfo.get("email")
+            google_id = userinfo.get("sub")
+            picture = userinfo.get("picture")
+            name = userinfo.get("name")
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid Google credential: {str(e)}",
+            )
+    if not email:
+        raise HTTPException(status_code=400, detail="Google account email not found")
     # Check if user exists
     user = await db.users.find_one({"email": email})
-    
     print(f"DEBUG: Login with email: '{email}'")
     print(f"DEBUG: Settings Admin Email: '{settings.MAIL_USERNAME}'")
-
     if not user:
         # Create new user
         role = "client"
         if email == settings.MAIL_USERNAME:
             role = "admin"
             print("DEBUG: Promoting NEW user to ADMIN")
-            
         new_user = {
             "email": email,
             "google_id": google_id,
@@ -321,22 +352,21 @@ async def google_login(login_data: GoogleLogin, db=Depends(get_auth_database)):
             "full_name": name,
             "role": role,
             "is_verified": True,  # Google emails are verified
-            "password_hash": get_password_hash(secrets.token_urlsafe(16)), # Random password
+            "password_hash": get_password_hash(secrets.token_urlsafe(16)),  # Random password
             "created_at": datetime.utcnow(),
-            "updated_at": datetime.utcnow()
+            "updated_at": datetime.utcnow(),
         }
         result = await db.users.insert_one(new_user)
         user = await db.users.find_one({"_id": result.inserted_id})
     else:
         # Update existing user with google info if missing
         update_data = {}
-        if not user.get("google_id"):
+        if not user.get("google_id") and google_id:
             update_data["google_id"] = google_id
         if not user.get("picture") and picture:
             update_data["picture"] = picture
         if not user.get("is_verified"):
             update_data["is_verified"] = True
-        
         # Auto-promote to admin if email matches
         if email == settings.MAIL_USERNAME:
             if user.get("role") != "admin":
@@ -345,18 +375,15 @@ async def google_login(login_data: GoogleLogin, db=Depends(get_auth_database)):
             else:
                 print("DEBUG: User is already ADMIN")
         else:
-             print("DEBUG: Email does not match Admin Email")
-            
+            print("DEBUG: Email does not match Admin Email")
         if update_data:
+            update_data["updated_at"] = datetime.utcnow()
             await db.users.update_one({"_id": user["_id"]}, {"$set": update_data})
             user = await db.users.find_one({"_id": user["_id"]})
-
     # Create access token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         subject=user["email"], expires_delta=access_token_expires
     )
-    
     print(f"DEBUG: Final Role in Token Response: {user['role']}")
-    
     return {"access_token": access_token, "token_type": "bearer", "role": user["role"]}

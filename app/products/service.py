@@ -2,6 +2,7 @@ from app.db.mongodb import get_database
 from typing import List, Optional, Dict, Any, Tuple
 from app.products.schemas import Product, ShopPrice, ProductListResponse, SearchResult, ShopRanking, CategoryAnalytics
 import re
+from app.search_utils import get_search_terms, score_search_match
 
 TOP_CATEGORY_MAPPING = {
     "Audio, Hifi, Casque": "TV / Photo / Son",
@@ -329,54 +330,91 @@ async def search_products(query: str, limit: int = 10, shop: Optional[str] = Non
     db = get_database()
     client = db.client
     
-    results = []
-    seen_skus = set()
-    
-    # Create regex pattern for case-insensitive search
-    regex_pattern = {"$regex": query, "$options": "i"}
-    
-    # Search merged_products first (priority)
-    collection = client["Retails"]["merged_products"]
-    
-    match_query = {
-        "$or": [
-            {"title": regex_pattern},
-            {"sku": regex_pattern}
-        ]
-    }
-    
-    if shop:
-        match_query[f"shops.{shop}"] = {"$exists": True}
+    normalized_query = query.strip()
+    search_terms = get_search_terms(normalized_query)
 
-    cursor = collection.find(match_query).limit(limit)
-    
-    async for p in cursor:
-        sku = p.get("sku")
-        if sku and sku not in seen_skus:
-            seen_skus.add(sku)
-            product = parse_product(p)
-            
-            # If filtering by shop, use that shop's price
-            price = product.bestPrice
-            if shop and p.get("shops") and p["shops"].get(shop) and p["shops"][shop].get("price"):
+    def build_match_query() -> Dict[str, Any]:
+        regexes = [{"$regex": re.escape(term), "$options": "i"} for term in search_terms]
+        if not regexes:
+            regexes = [{"$regex": re.escape(normalized_query), "$options": "i"}]
+
+        fields = ["title", "sku", "subcategory", "low_category"]
+        match_query: Dict[str, Any] = {
+            "$or": [{field: regex} for regex in regexes for field in fields]
+        }
+
+        if shop:
+            match_query[f"shops.{shop}"] = {"$exists": True}
+
+        return match_query
+
+    async def collect_candidates(collection_name: str, base_query: Dict[str, Any], parser, shop_name: Optional[str] = None) -> list[dict]:
+        collection = client["Retails"][collection_name]
+        cursor = collection.find(base_query).limit(max(limit * 8, 40))
+        candidates: list[dict] = []
+        async for product_doc in cursor:
+            parsed = parser(product_doc) if shop_name else parser(product_doc)
+            product_relevance = score_search_match(
+                normalized_query,
+                title=str(product_doc.get("title", "")),
+                sku=str(product_doc.get("sku", "")),
+                brand=str(product_doc.get("brand", "") if not shop_name else product_doc.get("brand", "")),
+                category=str(product_doc.get("subcategory", "")) or str(product_doc.get("low_category", "")),
+            )
+
+            price = parsed.bestPrice
+            if shop and product_doc.get("shops") and product_doc["shops"].get(shop) and product_doc["shops"][shop].get("price"):
                 try:
-                    price = float(p["shops"][shop]["price"])
-                except:
+                    price = float(product_doc["shops"][shop]["price"])
+                except Exception:
                     pass
-            
-            results.append(SearchResult(
-                id=product.id,
-                name=product.name,
-                brand=product.brand,
-                bestPrice=price,
-                image=product.image,
-                inStock=product.inStock
-            ))
-    
-    # If we need more results, search individual shop collections
-    if len(results) < limit:
-        remaining = limit - len(results)
-        
+
+            candidates.append({
+                "id": parsed.id,
+                "name": parsed.name,
+                "brand": parsed.brand,
+                "bestPrice": price,
+                "image": parsed.image,
+                "inStock": parsed.inStock,
+                "relevance": product_relevance,
+                "sku": product_doc.get("sku"),
+            })
+        return candidates
+
+    candidate_rows: list[dict] = []
+    seen_skus: set[str] = set()
+
+    main_candidates = await collect_candidates("merged_products", build_match_query(), parse_product)
+    candidate_rows.extend(main_candidates)
+
+    if not candidate_rows:
+        broad_collection = client["Retails"]["merged_products"]
+        cursor = broad_collection.find({}).limit(max(limit * 20, 200))
+        async for product_doc in cursor:
+            sku = product_doc.get("sku")
+            if sku and sku in seen_skus:
+                continue
+            if sku:
+                seen_skus.add(sku)
+
+            parsed = parse_product(product_doc)
+            candidate_rows.append({
+                "id": parsed.id,
+                "name": parsed.name,
+                "brand": parsed.brand,
+                "bestPrice": parsed.bestPrice,
+                "image": parsed.image,
+                "inStock": parsed.inStock,
+                "relevance": score_search_match(
+                    normalized_query,
+                    title=parsed.name,
+                    sku=str(product_doc.get("sku", "")),
+                    brand=parsed.brand,
+                    category=str(product_doc.get("subcategory", "")) or str(product_doc.get("low_category", "")),
+                ),
+            })
+
+    if len(candidate_rows) < limit:
         shop_collections = [
             ("mytek", "mytek_details"),
             ("spacenet", "spacenet_details"),
@@ -385,40 +423,57 @@ async def search_products(query: str, limit: int = 10, shop: Optional[str] = Non
             ("darty", "darty_details"),
             ("jumbo", "jumbo_details"),
         ]
-        
-        # If shop filter is active, only search that shop's collection
+
         if shop:
-            shop_collections = [s for s in shop_collections if s[0] == shop]
+            shop_collections = [item for item in shop_collections if item[0] == shop]
+
+        secondary_query: Dict[str, Any] = {
+            "$or": [{field: {"$regex": re.escape(term), "$options": "i"}} for term in search_terms for field in ["title", "sku", "brand"]]
+        }
 
         for shop_name, collection_name in shop_collections:
-            if len(results) >= limit:
+            if len(candidate_rows) >= max(limit * 6, 40):
                 break
-            
+
             collection = client["Retails"][collection_name]
-            cursor = collection.find({
-                "$or": [
-                    {"title": regex_pattern},
-                    {"sku": regex_pattern}
-                ]
-            }).limit(remaining)
-            
-            async for p in cursor:
-                sku = p.get("sku")
-                if sku and sku not in seen_skus:
+            cursor = collection.find(secondary_query).limit(max(limit * 6, 40))
+            async for product_doc in cursor:
+                sku = product_doc.get("sku")
+                if sku and sku in seen_skus:
+                    continue
+                if sku:
                     seen_skus.add(sku)
-                    product = parse_single_shop_product(p, shop_name)
-                    results.append(SearchResult(
-                        id=product.id,
-                        name=product.name,
-                        brand=product.brand,
-                        bestPrice=product.bestPrice,
-                        image=product.image,
-                        inStock=product.inStock
-                    ))
-                    if len(results) >= limit:
-                        break
-    
-    return results[:limit]
+
+                parsed = parse_single_shop_product(product_doc, shop_name)
+                candidate_rows.append({
+                    "id": parsed.id,
+                    "name": parsed.name,
+                    "brand": parsed.brand,
+                    "bestPrice": parsed.bestPrice,
+                    "image": parsed.image,
+                    "inStock": parsed.inStock,
+                    "relevance": score_search_match(
+                        normalized_query,
+                        title=str(product_doc.get("title", "")),
+                        sku=str(product_doc.get("sku", "")),
+                        brand=str(product_doc.get("brand", "")),
+                        category=str(product_doc.get("subcategory", "")),
+                    ),
+                    "sku": sku,
+                })
+
+    deduped_rows: list[dict] = []
+    seen_ids: set[str] = set()
+    for candidate in sorted(candidate_rows, key=lambda item: (item.get("relevance", 0.0), -item.get("bestPrice", 0.0)), reverse=True):
+        candidate_id = candidate["id"]
+        if candidate_id in seen_ids:
+            continue
+        seen_ids.add(candidate_id)
+        deduped_rows.append(candidate)
+        if len(deduped_rows) >= limit:
+            break
+
+    return [SearchResult(**row) for row in deduped_rows]
 
 
 async def get_products_listing(
