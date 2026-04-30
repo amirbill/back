@@ -101,11 +101,10 @@ async def list_users(_: UserResponse = Depends(require_superadmin)):
     return [_serialize_user(user) for user in users]
 
 
-@router.patch("/users/{user_id}/role", response_model=UserResponse)
-async def update_user_role(
+async def _update_user_role_impl(
     user_id: str,
     payload: UpdateUserRolePayload,
-    _: UserResponse = Depends(require_superadmin),
+    _: UserResponse,
 ):
     collection, document = await _find_user_document(user_id)
     if not collection or not document:
@@ -122,6 +121,24 @@ async def update_user_role(
     if not updated_user:
         raise HTTPException(status_code=404, detail="User not found")
     return _serialize_user(updated_user)
+
+
+@router.post("/users/{user_id}/role", response_model=UserResponse)
+async def update_user_role(
+    user_id: str,
+    payload: UpdateUserRolePayload,
+    current_user: UserResponse = Depends(require_superadmin),
+):
+    return await _update_user_role_impl(user_id, payload, current_user)
+
+
+@router.patch("/users/{user_id}/role", response_model=UserResponse)
+async def update_user_role_patch(
+    user_id: str,
+    payload: UpdateUserRolePayload,
+    current_user: UserResponse = Depends(require_superadmin),
+):
+    return await _update_user_role_impl(user_id, payload, current_user)
 
 
 @router.get("/access-rules")
