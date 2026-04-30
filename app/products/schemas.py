@@ -57,3 +57,31 @@ class CategoryAnalytics(BaseModel):
     cheapest_avg_price: float
     shop_rankings: List[ShopRanking]
     only_available: bool
+
+
+class FakePromoItem(BaseModel):
+    id: str
+    product_id: Optional[str] = None
+    sku: Optional[str] = None
+    title: str
+    brand: str
+    shop: str
+    image: str
+    url: str
+    old_scrap_old_price: float = 0
+    old_scrap_price: float = 0
+    new_scrap_price: float = 0
+    new_scrap_old_price: float = 0
+    price_change: float = 0
+    price_change_pct: float = 0
+    real_increase: float = 0
+    real_increase_pct: float = 0
+    old_price_inflated_by: float = 0
+    old_price_inflated_by_pct: float = 0
+    advertised_discount: float = 0
+    advertised_discount_pct: float = 0
+    verdict: Optional[str] = None
+    top_category: Optional[str] = None
+    subcategory: Optional[str] = None
+    category: Optional[str] = None
+    updated_at: Optional[str] = None

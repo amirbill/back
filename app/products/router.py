@@ -128,7 +128,7 @@ async def get_category_analytics(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/fake-promos/list")
+@router.get("/fake-promos/list", response_model=List[schemas.FakePromoItem])
 async def get_fake_promos(
     limit: int = Query(10, ge=1, le=500, description="Number of fake promo products to return")
 ):

@@ -732,6 +732,8 @@ async def get_fake_promos(limit: int = 10) -> List[Dict[str, Any]]:
                 
                 results.append({
                     "id": str(doc["_id"]),
+                    "product_id": str(doc.get("product_id")) if doc.get("product_id") is not None else None,
+                    "sku": doc.get("sku"),
                     "title": doc.get("title", "Produit"),
                     "brand": doc.get("brand", ""),
                     "shop": doc.get("shop", ""),
@@ -741,12 +743,19 @@ async def get_fake_promos(limit: int = 10) -> List[Dict[str, Any]]:
                     "old_scrap_price": doc.get("old_scrap_price", 0),
                     "new_scrap_price": doc.get("new_scrap_price", 0),
                     "new_scrap_old_price": doc.get("new_scrap_old_price", 0),
+                    "price_change": doc.get("price_change", 0),
+                    "price_change_pct": doc.get("price_change_pct", 0),
+                    "real_increase": doc.get("real_increase", 0),
                     "old_price_inflated_by": doc.get("old_price_inflated_by", 0),
                     "old_price_inflated_by_pct": doc.get("old_price_inflated_by_pct", 0),
                     "advertised_discount": doc.get("advertised_discount", 0),
                     "advertised_discount_pct": doc.get("advertised_discount_pct", 0),
                     "real_increase_pct": doc.get("real_increase_pct", 0),
+                    "verdict": doc.get("verdict"),
+                    "top_category": doc.get("top_category"),
+                    "subcategory": doc.get("subcategory"),
                     "category": doc.get("subcategory", doc.get("top_category", "")),
+                    "updated_at": str(doc.get("_updated_at")) if doc.get("_updated_at") is not None else None,
                 })
         
         # Interleave shops: round-robin so cards alternate between shops
