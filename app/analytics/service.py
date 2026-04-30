@@ -5,7 +5,10 @@ from app.analytics.schemas import (
     MergeStats, 
     MergeStatsResponse,
     ShopDetailedAnalytics,
-    DetailedAnalyticsResponse
+    DetailedAnalyticsResponse,
+    StoreAvailabilityEntry,
+    StoreProductAdded,
+    StoreProductsAddedResponse,
 )
 
 # Mapping for shop name normalization (DB name → canonical name)
@@ -16,6 +19,22 @@ SHOP_NAME_MAP = {
 def normalize_shop_name(name: str) -> str:
     """Normalize shop names to handle renames (e.g., oxtek → technopro)"""
     return SHOP_NAME_MAP.get(name.lower(), name)
+
+
+def _serialize_datetime(value) -> Optional[str]:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _shop_aliases(shop: str) -> List[str]:
+    normalized = normalize_shop_name(shop)
+    aliases = {shop, normalized}
+    if normalized == "technopro":
+        aliases.add("oxtek")
+    return list(aliases)
 
 async def get_shop_prices() -> List[ShopAnalytics]:
     db = get_database()
@@ -162,3 +181,69 @@ async def get_detailed_shop_analytics() -> DetailedAnalyticsResponse:
         print(f"Error fetching Retails shop analytics: {e}")
     
     return DetailedAnalyticsResponse(para_shops=para_shops, retails_shops=retails_shops)
+
+
+async def get_store_products_added(
+    shop: str,
+    source: str = "retails",
+    limit: int = 12,
+) -> StoreProductsAddedResponse:
+    db = get_database()
+    client = db.client
+
+    normalized_shop = normalize_shop_name(shop)
+    db_name = "PARA" if source.lower() == "para" else "Retails"
+    products: List[StoreProductAdded] = []
+
+    if not client:
+        return StoreProductsAddedResponse(shop=normalized_shop, source=db_name.lower(), total=0, products_added=[])
+
+    try:
+        collection = client[db_name]["products_added"]
+        query = {"shop": {"$in": _shop_aliases(shop)}}
+        docs = await collection.find(query).sort("_updated_at", -1).limit(limit).to_list(length=limit)
+
+        for doc in docs:
+            availability_rows = [
+                StoreAvailabilityEntry(
+                    store=item.get("store", ""),
+                    status=item.get("status"),
+                    available=bool(item.get("available", False)),
+                )
+                for item in doc.get("store_availability", [])
+                if isinstance(item, dict)
+            ]
+
+            products.append(
+                StoreProductAdded(
+                    id=str(doc.get("_id", "")),
+                    url=doc.get("url"),
+                    shop=normalize_shop_name(doc.get("shop", normalized_shop)),
+                    scraped_at=_serialize_datetime(doc.get("scraped_at")),
+                    updated_at=_serialize_datetime(doc.get("_updated_at")),
+                    top_category=doc.get("top_category"),
+                    low_category=doc.get("low_category"),
+                    subcategory=doc.get("subcategory"),
+                    title=doc.get("title", ""),
+                    product_id=str(doc.get("product_id")) if doc.get("product_id") is not None else None,
+                    sku=doc.get("sku"),
+                    overview=doc.get("overview"),
+                    brand_logo=doc.get("brand_logo"),
+                    brand=doc.get("brand"),
+                    price=float(doc.get("price")) if doc.get("price") is not None else None,
+                    specifications={str(k): str(v) for k, v in (doc.get("specifications") or {}).items()},
+                    images=[str(image) for image in doc.get("images", []) if image],
+                    availability=doc.get("availability"),
+                    available=bool(doc.get("available", False)),
+                    store_availability=availability_rows,
+                )
+            )
+    except Exception as e:
+        print(f"Error fetching products_added for {normalized_shop} from {db_name}: {e}")
+
+    return StoreProductsAddedResponse(
+        shop=normalized_shop,
+        source=db_name.lower(),
+        total=len(products),
+        products_added=products,
+    )

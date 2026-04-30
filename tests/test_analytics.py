@@ -355,3 +355,64 @@ class TestAnalyticsShopDetailsEndpoint:
                    new_callable=AsyncMock, side_effect=Exception("fail")):
             resp = client.get(f"{BASE}/shop-details")
         assert resp.status_code == 500
+
+
+class TestStoreProductsAdded:
+
+    def test_service_returns_products_added_rows(self):
+        from app.analytics import service
+
+        doc = {
+            "_id": "abc123",
+            "shop": "mytek",
+            "title": "Ecran HP",
+            "price": 569,
+            "sku": "94C19AS",
+            "available": True,
+            "images": ["https://img.example/test.jpg"],
+            "specifications": {"Marque": "HP"},
+            "store_availability": [{"store": "Tunis", "status": "En stock", "available": True}],
+        }
+
+        mock_db = MagicMock()
+        mock_client = MagicMock()
+        mock_db.client = mock_client
+        collection = MagicMock()
+        cursor = MagicMock()
+        cursor.sort.return_value = cursor
+        cursor.limit.return_value = cursor
+        cursor.to_list = AsyncMock(return_value=[doc])
+        collection.find.return_value = cursor
+        mock_client.__getitem__.return_value.__getitem__.return_value = collection
+
+        with patch.object(service, "get_database", return_value=mock_db):
+            result = _run(service.get_store_products_added("mytek"))
+
+        assert result.shop == "mytek"
+        assert result.total == 1
+        assert result.products_added[0].title == "Ecran HP"
+        assert result.products_added[0].store_availability[0].store == "Tunis"
+
+    def test_endpoint_returns_products_added(self, client):
+        from app.analytics.schemas import StoreProductsAddedResponse, StoreProductAdded
+
+        payload = StoreProductsAddedResponse(
+            shop="mytek",
+            source="retails",
+            total=1,
+            products_added=[
+                StoreProductAdded(
+                    id="abc123",
+                    shop="mytek",
+                    title="Ecran HP",
+                    price=569.0,
+                    available=True,
+                )
+            ],
+        )
+
+        with patch("app.analytics.service.get_store_products_added", new_callable=AsyncMock, return_value=payload):
+            resp = client.get(f"{BASE}/store-products-added/mytek")
+
+        assert resp.status_code == 200
+        assert resp.json()["products_added"][0]["title"] == "Ecran HP"

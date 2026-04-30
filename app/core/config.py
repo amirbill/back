@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     PROJECT_NAME: str = "FastAPI Backend"
     API_V1_STR: str = "/api/v1"
-    MONGO_URI: str
+    MONGO_URI: str = "mongodb://localhost:27017"
     DB_NAME: str = "Retails"
     AUTH_DB_NAME: str = "Users"
     
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     VALIDATE_CERTS: bool = False
     
     # Google Auth
-    GOOGLE_CLIENT_ID: str
+    GOOGLE_CLIENT_ID: str = ""
 
     # Groq API
     GROQ_API_KEY: str = ""

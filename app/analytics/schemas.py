@@ -33,3 +33,39 @@ class ShopDetailedAnalytics(BaseModel):
 class DetailedAnalyticsResponse(BaseModel):
     para_shops: List[ShopDetailedAnalytics]
     retails_shops: List[ShopDetailedAnalytics]
+
+
+class StoreAvailabilityEntry(BaseModel):
+    store: str
+    status: Optional[str] = None
+    available: bool = False
+
+
+class StoreProductAdded(BaseModel):
+    id: str
+    url: Optional[str] = None
+    shop: str
+    scraped_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    top_category: Optional[str] = None
+    low_category: Optional[str] = None
+    subcategory: Optional[str] = None
+    title: str
+    product_id: Optional[str] = None
+    sku: Optional[str] = None
+    overview: Optional[str] = None
+    brand_logo: Optional[str] = None
+    brand: Optional[str] = None
+    price: Optional[float] = None
+    specifications: Dict[str, str] = {}
+    images: List[str] = []
+    availability: Optional[str] = None
+    available: bool = False
+    store_availability: List[StoreAvailabilityEntry] = []
+
+
+class StoreProductsAddedResponse(BaseModel):
+    shop: str
+    source: str
+    total: int
+    products_added: List[StoreProductAdded]
