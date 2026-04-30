@@ -416,3 +416,64 @@ class TestStoreProductsAdded:
 
         assert resp.status_code == 200
         assert resp.json()["products_added"][0]["title"] == "Ecran HP"
+
+
+class TestStoreProductsRemoved:
+
+    def test_service_returns_products_removed_rows(self):
+        from app.analytics import service
+
+        doc = {
+            "_id": "removed123",
+            "shop": "mytek",
+            "title": "Canon Cartouche",
+            "price": 62,
+            "sku": "CLI-481-YXL",
+            "available": False,
+            "images": ["https://img.example/removed.jpg"],
+            "specifications": {"Marque": "CANON"},
+            "store_availability": [{"store": "Megastore Tunis Charguia", "status": "Commande 48h", "available": False}],
+        }
+
+        mock_db = MagicMock()
+        mock_client = MagicMock()
+        mock_db.client = mock_client
+        collection = MagicMock()
+        cursor = MagicMock()
+        cursor.sort.return_value = cursor
+        cursor.limit.return_value = cursor
+        cursor.to_list = AsyncMock(return_value=[doc])
+        collection.find.return_value = cursor
+        mock_client.__getitem__.return_value.__getitem__.return_value = collection
+
+        with patch.object(service, "get_database", return_value=mock_db):
+            result = _run(service.get_store_products_removed("mytek"))
+
+        assert result.shop == "mytek"
+        assert result.total == 1
+        assert result.products_removed[0].title == "Canon Cartouche"
+        assert result.products_removed[0].store_availability[0].available is False
+
+    def test_endpoint_returns_products_removed(self, client):
+        from app.analytics.schemas import StoreProductsRemovedResponse, StoreProductAdded
+
+        payload = StoreProductsRemovedResponse(
+            shop="mytek",
+            source="retails",
+            total=1,
+            products_removed=[
+                StoreProductAdded(
+                    id="removed123",
+                    shop="mytek",
+                    title="Canon Cartouche",
+                    price=62.0,
+                    available=False,
+                )
+            ],
+        )
+
+        with patch("app.analytics.service.get_store_products_removed", new_callable=AsyncMock, return_value=payload):
+            resp = client.get(f"{BASE}/store-products-removed/mytek")
+
+        assert resp.status_code == 200
+        assert resp.json()["products_removed"][0]["title"] == "Canon Cartouche"

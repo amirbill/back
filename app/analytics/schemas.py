@@ -69,3 +69,10 @@ class StoreProductsAddedResponse(BaseModel):
     source: str
     total: int
     products_added: List[StoreProductAdded]
+
+
+class StoreProductsRemovedResponse(BaseModel):
+    shop: str
+    source: str
+    total: int
+    products_removed: List[StoreProductAdded]

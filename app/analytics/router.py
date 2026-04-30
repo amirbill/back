@@ -39,3 +39,13 @@ async def read_store_products_added(shop: str, source: str = "retails", limit: i
         return products
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/store-products-removed/{shop}", response_model=schemas.StoreProductsRemovedResponse)
+async def read_store_products_removed(shop: str, source: str = "retails", limit: int = 12):
+    """Get products_removed rows for a specific store from Retails or PARA"""
+    try:
+        products = await service.get_store_products_removed(shop=shop, source=source, limit=limit)
+        return products
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
