@@ -36,6 +36,7 @@ class UserProfileUpdate(BaseModel):
     email: Optional[EmailStr] = None
     birthdate: Optional[str] = None
     address: Optional[str] = None
+    picture: Optional[str] = None
 
 class ChangePassword(BaseModel):
     current_password: str
