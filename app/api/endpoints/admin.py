@@ -107,7 +107,7 @@ async def _update_user_role_impl(
     _: UserResponse,
 ):
     collection, document = await _find_user_document(user_id)
-    if not collection or not document:
+    if collection is None or document is None:
         raise HTTPException(status_code=404, detail="User not found")
 
     result = await collection.update_one(
