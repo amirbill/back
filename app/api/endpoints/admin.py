@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
-from typing import Any, List, Literal
+import re
+from typing import Any, List, Literal, Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,6 +28,27 @@ class AccessRulePayload(BaseModel):
     allowed_emails: List[str] = Field(default_factory=list)
 
 
+BlogSectionType = Literal["h2", "h3", "p", "ul", "highlight"]
+
+
+class BlogSectionPayload(BaseModel):
+    type: BlogSectionType
+    text: Optional[str] = None
+    items: List[str] = Field(default_factory=list)
+
+
+class BlogPayload(BaseModel):
+    slug: Optional[str] = None
+    category: str = Field(min_length=1)
+    categoryColor: str = Field(min_length=1)
+    title: str = Field(min_length=1)
+    desc: str = Field(min_length=1)
+    img: str = Field(min_length=1)
+    read: str = Field(min_length=1)
+    date: str = Field(min_length=1)
+    sections: List[BlogSectionPayload] = Field(default_factory=list)
+
+
 def require_superadmin(current_user: UserResponse = Depends(get_current_user)) -> UserResponse:
     if current_user.role != "superadmin":
         raise HTTPException(status_code=403, detail="Superadmin access required")
@@ -43,6 +65,10 @@ def _secondary_users_collection():
 
 def _rules_collection():
     return get_auth_database()["page_access_rules"]
+
+
+def _blogs_collection():
+    return get_auth_database()["blogs"]
 
 
 def _serialize_user(document: dict[str, Any]) -> dict[str, Any]:
@@ -64,6 +90,20 @@ def _serialize_rule(document: dict[str, Any]) -> dict[str, Any]:
     return document
 
 
+def _serialize_blog(document: dict[str, Any]) -> dict[str, Any]:
+    document = dict(document)
+    document["_id"] = str(document.get("_id"))
+    for key in ("created_at", "updated_at"):
+        value = document.get(key)
+        if isinstance(value, datetime):
+            document[key] = value.isoformat()
+        elif value is None:
+            document[key] = None
+        else:
+            document[key] = str(value)
+    return document
+
+
 def _normalize_rule_path(path: str) -> str:
     cleaned = path.strip()
     if not cleaned:
@@ -73,6 +113,22 @@ def _normalize_rule_path(path: str) -> str:
     if len(cleaned) > 1:
         cleaned = cleaned.rstrip("/")
     return cleaned
+
+
+def _slugify(value: str) -> str:
+    normalized = re.sub(r"[^a-z0-9]+", "-", value.strip().lower())
+    normalized = re.sub(r"-{2,}", "-", normalized).strip("-")
+    return normalized or "blog"
+
+
+async def _build_unique_blog_slug(base_slug: str) -> str:
+    slug = _slugify(base_slug)
+    candidate = slug
+    index = 2
+    while await _blogs_collection().find_one({"slug": candidate}):
+        candidate = f"{slug}-{index}"
+        index += 1
+    return candidate
 
 
 async def _find_user_document(user_id: str):
@@ -201,3 +257,56 @@ async def delete_access_rule(path: str, _: UserResponse = Depends(require_supera
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Access rule not found")
     return {"message": "Access rule deleted"}
+
+
+@router.get("/blogs")
+async def list_admin_blogs(_: UserResponse = Depends(require_superadmin)):
+    cursor = _blogs_collection().find({}).sort("updated_at", -1)
+    blogs = await cursor.to_list(length=None)
+    return [_serialize_blog(blog) for blog in blogs]
+
+
+@router.post("/blogs")
+async def create_blog(payload: BlogPayload, _: UserResponse = Depends(require_superadmin)):
+    now = datetime.now(timezone.utc)
+    slug = await _build_unique_blog_slug(payload.slug or payload.title)
+    blog_document = {
+        "slug": slug,
+        "category": payload.category.strip(),
+        "categoryColor": payload.categoryColor.strip(),
+        "title": payload.title.strip(),
+        "desc": payload.desc.strip(),
+        "img": payload.img.strip(),
+        "read": payload.read.strip(),
+        "date": payload.date.strip(),
+        "sections": [
+            {
+                "type": section.type,
+                "text": section.text.strip() if section.text else None,
+                "items": [item.strip() for item in section.items if item.strip()],
+            }
+            for section in payload.sections
+        ],
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    result = await _blogs_collection().insert_one(blog_document)
+    saved_blog = await _blogs_collection().find_one({"_id": result.inserted_id})
+    if not saved_blog:
+        raise HTTPException(status_code=500, detail="Unable to save blog")
+    return _serialize_blog(saved_blog)
+
+
+@router.delete("/blogs/{blog_id}")
+async def delete_blog(blog_id: str, _: UserResponse = Depends(require_superadmin)):
+    target_ids: list[Any] = [blog_id]
+    try:
+        target_ids.insert(0, ObjectId(blog_id))
+    except Exception:
+        pass
+
+    result = await _blogs_collection().delete_one({"_id": {"$in": target_ids}})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Blog not found")
+    return {"message": "Blog deleted"}
