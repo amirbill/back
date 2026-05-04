@@ -64,6 +64,17 @@ def _serialize_rule(document: dict[str, Any]) -> dict[str, Any]:
     return document
 
 
+def _normalize_rule_path(path: str) -> str:
+    cleaned = path.strip()
+    if not cleaned:
+        return "/"
+    if not cleaned.startswith("/"):
+        cleaned = f"/{cleaned}"
+    if len(cleaned) > 1:
+        cleaned = cleaned.rstrip("/")
+    return cleaned
+
+
 async def _find_user_document(user_id: str):
     collections = [_users_collection(), _secondary_users_collection()]
 
@@ -148,6 +159,13 @@ async def list_access_rules(_: UserResponse = Depends(require_superadmin)):
     return [_serialize_rule(rule) for rule in rules]
 
 
+@router.get("/access-rules/public")
+async def list_public_access_rules():
+    cursor = _rules_collection().find({}).sort("category", 1).sort("label", 1)
+    rules = await cursor.to_list(length=None)
+    return [_serialize_rule(rule) for rule in rules]
+
+
 @router.post("/access-rules")
 async def upsert_access_rule(
     payload: AccessRulePayload,
@@ -155,7 +173,7 @@ async def upsert_access_rule(
 ):
     now = datetime.now(timezone.utc)
     rule_document = {
-        "path": payload.path.strip(),
+        "path": _normalize_rule_path(payload.path),
         "label": payload.label.strip(),
         "category": payload.category.strip() or "Custom",
         "visible": payload.visible,
