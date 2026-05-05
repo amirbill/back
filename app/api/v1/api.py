@@ -11,6 +11,7 @@ from app.api.endpoints import bag
 from app.api.endpoints import blogs
 from app.ml.router import router as energy_router
 from app.chat.router import router as chat_router
+from app.vols.router import router as vols_router
 
 api_router = APIRouter()
 api_router.include_router(health.router, tags=["health"])
@@ -23,4 +24,5 @@ api_router.include_router(blogs.router, prefix="/blogs", tags=["blogs"])
 api_router.include_router(bag.router, prefix="/bag", tags=["bag"])
 api_router.include_router(energy_router, prefix="/energy", tags=["energy"])
 api_router.include_router(chat_router, prefix="/chat", tags=["chat"])
+api_router.include_router(vols_router, prefix="/vols", tags=["vols"])
 
