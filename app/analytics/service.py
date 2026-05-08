@@ -66,7 +66,7 @@ async def _get_store_products_collection(
                     status=item.get("status"),
                     available=bool(item.get("available", False)),
                 )
-                for item in doc.get("store_availability", [])
+                for item in (doc.get("store_availability") or [])
                 if isinstance(item, dict)
             ]
 
