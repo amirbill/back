@@ -680,96 +680,83 @@ async def get_category_analytics(category: str) -> Optional[CategoryAnalytics]:
 
 
 async def get_fake_promos(limit: int = 10) -> List[Dict[str, Any]]:
-    """Fetch fake promo products from fake_promos collection, balanced across shops"""
+    """Fetch random fake promo products from Retails.fake_promos."""
     db = get_database()
     client = db.client
     
     try:
         coll = client["Retails"]["fake_promos"]
-        
-        # Get distinct shops, then sample evenly from each
-        shops = await coll.distinct("shop", {"direction": "fake_promo"})
-        per_shop = max(3, (limit + len(shops) - 1) // len(shops)) if shops else limit
-        
+
+        pipeline = [
+            {"$match": {"direction": "fake_promo"}},
+            {"$sample": {"size": limit}},
+            {"$project": {
+                "_id": 1,
+                "product_id": 1,
+                "sku": 1,
+                "title": 1,
+                "brand": 1,
+                "shop": 1,
+                "images": 1,
+                "url": 1,
+                "old_scrap_price": 1,
+                "old_scrap_old_price": 1,
+                "new_scrap_price": 1,
+                "new_scrap_old_price": 1,
+                "price_change": 1,
+                "price_change_pct": 1,
+                "real_increase": 1,
+                "real_increase_pct": 1,
+                "old_price_inflated_by": 1,
+                "old_price_inflated_by_pct": 1,
+                "advertised_discount": 1,
+                "advertised_discount_pct": 1,
+                "verdict": 1,
+                "top_category": 1,
+                "low_category": 1,
+                "subcategory": 1,
+                "_updated_at": 1,
+            }},
+        ]
+
         results = []
-        for shop in shops:
-            cursor = coll.find(
-                {"direction": "fake_promo", "shop": shop},
-                {
-                    "_id": 1,
-                    "title": 1,
-                    "brand": 1,
-                    "shop": 1,
-                    "images": 1,
-                    "url": 1,
-                    "old_scrap_price": 1,
-                    "old_scrap_old_price": 1,
-                    "new_scrap_price": 1,
-                    "new_scrap_old_price": 1,
-                    "price_change": 1,
-                    "price_change_pct": 1,
-                    "real_increase": 1,
-                    "real_increase_pct": 1,
-                    "old_price_inflated_by": 1,
-                    "old_price_inflated_by_pct": 1,
-                    "advertised_discount": 1,
-                    "advertised_discount_pct": 1,
-                    "verdict": 1,
-                    "top_category": 1,
-                    "subcategory": 1,
-                    "_updated_at": 1,
-                }
-            ).sort("old_price_inflated_by_pct", -1).limit(per_shop)
-            
-            async for doc in cursor:
-                # Get product image, skip spacenet livraison placeholder
-                image = "/placeholder.svg"
-                images = doc.get("images", [])
-                for img in images:
-                    if img and "livraison-gratuite" not in img:
-                        image = img
-                        break
-                
-                results.append({
-                    "id": str(doc["_id"]),
-                    "product_id": str(doc.get("product_id")) if doc.get("product_id") is not None else None,
-                    "sku": doc.get("sku"),
-                    "title": doc.get("title", "Produit"),
-                    "brand": doc.get("brand", ""),
-                    "shop": doc.get("shop", ""),
-                    "image": image,
-                    "url": doc.get("url", ""),
-                    "old_scrap_old_price": doc.get("old_scrap_old_price", 0),
-                    "old_scrap_price": doc.get("old_scrap_price", 0),
-                    "new_scrap_price": doc.get("new_scrap_price", 0),
-                    "new_scrap_old_price": doc.get("new_scrap_old_price", 0),
-                    "price_change": doc.get("price_change", 0),
-                    "price_change_pct": doc.get("price_change_pct", 0),
-                    "real_increase": doc.get("real_increase", 0),
-                    "old_price_inflated_by": doc.get("old_price_inflated_by", 0),
-                    "old_price_inflated_by_pct": doc.get("old_price_inflated_by_pct", 0),
-                    "advertised_discount": doc.get("advertised_discount", 0),
-                    "advertised_discount_pct": doc.get("advertised_discount_pct", 0),
-                    "real_increase_pct": doc.get("real_increase_pct", 0),
-                    "verdict": doc.get("verdict"),
-                    "top_category": doc.get("top_category"),
-                    "subcategory": doc.get("subcategory"),
-                    "category": doc.get("subcategory", doc.get("top_category", "")),
-                    "updated_at": str(doc.get("_updated_at")) if doc.get("_updated_at") is not None else None,
-                })
-        
-        # Interleave shops: round-robin so cards alternate between shops
-        from itertools import zip_longest
-        by_shop = {}
-        for r in results:
-            by_shop.setdefault(r["shop"], []).append(r)
-        interleaved = []
-        for group in zip_longest(*by_shop.values()):
-            for item in group:
-                if item is not None:
-                    interleaved.append(item)
-        
-        return interleaved[:limit]
+        async for doc in coll.aggregate(pipeline):
+            image = "/placeholder.svg"
+            images = doc.get("images", [])
+            for img in images:
+                if img and "livraison-gratuite" not in img:
+                    image = img
+                    break
+
+            results.append({
+                "id": str(doc["_id"]),
+                "product_id": str(doc.get("product_id")) if doc.get("product_id") is not None else None,
+                "sku": doc.get("sku"),
+                "title": doc.get("title", "Produit"),
+                "brand": doc.get("brand", ""),
+                "shop": doc.get("shop", ""),
+                "image": image,
+                "url": doc.get("url", ""),
+                "old_scrap_old_price": doc.get("old_scrap_old_price", 0),
+                "old_scrap_price": doc.get("old_scrap_price", 0),
+                "new_scrap_price": doc.get("new_scrap_price", 0),
+                "new_scrap_old_price": doc.get("new_scrap_old_price", 0),
+                "price_change": doc.get("price_change", 0),
+                "price_change_pct": doc.get("price_change_pct", 0),
+                "real_increase": doc.get("real_increase", 0),
+                "old_price_inflated_by": doc.get("old_price_inflated_by", 0),
+                "old_price_inflated_by_pct": doc.get("old_price_inflated_by_pct", 0),
+                "advertised_discount": doc.get("advertised_discount", 0),
+                "advertised_discount_pct": doc.get("advertised_discount_pct", 0),
+                "real_increase_pct": doc.get("real_increase_pct", 0),
+                "verdict": doc.get("verdict"),
+                "top_category": doc.get("top_category"),
+                "subcategory": doc.get("subcategory"),
+                "category": doc.get("subcategory") or doc.get("low_category") or doc.get("top_category") or "",
+                "updated_at": str(doc.get("_updated_at")) if doc.get("_updated_at") is not None else None,
+            })
+
+        return results
     except Exception as e:
         print(f"Error fetching fake promos: {e}")
         return []
