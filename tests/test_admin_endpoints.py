@@ -28,6 +28,10 @@ def _make_collection(find_one_side_effect=None):
     collection = MagicMock()
     collection.find_one = AsyncMock(side_effect=find_one_side_effect)
     collection.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
+    collection.delete_many = AsyncMock(return_value=MagicMock(deleted_count=1))
+    find_cursor = MagicMock()
+    find_cursor.to_list = AsyncMock(return_value=[{"_id": "64a1b2c3d4e5f6789012abcd"}])
+    collection.find.return_value = find_cursor
     return collection
 
 
@@ -126,3 +130,48 @@ class TestAdminRoleUpdates:
             )
 
         assert response.status_code == 404
+
+
+class TestAdminUserDeletion:
+    def test_delete_user_returns_200(self, client):
+        current_superadmin = _make_user("superadmin@example.com", role="superadmin", user_id="superadmin-id")
+        target_user = _make_user("target@example.com", role="client")
+
+        auth_users = _make_collection(
+            find_one_side_effect=[
+                current_superadmin,
+                target_user,
+            ]
+        )
+        secondary_users = _make_collection(find_one_side_effect=[None])
+        auth_db = _make_db(auth_users, MagicMock())
+        secondary_db = _make_db(secondary_users)
+
+        with _override_auth_db(auth_db), _override_secondary_db(secondary_db), _override_admin_collections(
+            auth_users, secondary_users
+        ):
+            response = client.delete(
+                f"{ADMIN_BASE}/users/{target_user['_id']}",
+                headers=_auth_header(),
+            )
+
+        assert response.status_code == 200
+        assert response.json()["message"] == "User deleted"
+
+    def test_delete_user_rejects_self_delete(self, client):
+        current_superadmin = _make_user("superadmin@example.com", role="superadmin", user_id="superadmin-id")
+
+        auth_users = _make_collection(find_one_side_effect=[current_superadmin])
+        secondary_users = _make_collection(find_one_side_effect=[None])
+        auth_db = _make_db(auth_users, MagicMock())
+        secondary_db = _make_db(secondary_users)
+
+        with _override_auth_db(auth_db), _override_secondary_db(secondary_db), _override_admin_collections(
+            auth_users, secondary_users
+        ):
+            response = client.delete(
+                f"{ADMIN_BASE}/users/{current_superadmin['_id']}",
+                headers=_auth_header(),
+            )
+
+        assert response.status_code == 403

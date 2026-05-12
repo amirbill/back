@@ -152,6 +152,53 @@ async def _find_user_document(user_id: str):
     return None, None
 
 
+async def _delete_user_documents(user_id: str):
+    collection, document = await _find_user_document(user_id)
+    if collection is None or document is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    email = str(document.get("email", "")).strip().lower()
+    target_ids: list[Any] = [document.get("_id"), user_id]
+    try:
+        target_ids.append(ObjectId(user_id))
+    except Exception:
+        pass
+
+    matched_ids_by_collection: dict[Any, list[Any]] = {
+        _users_collection(): [],
+        _secondary_users_collection(): [],
+    }
+
+    for current_collection in matched_ids_by_collection:
+        filters: list[dict[str, Any]] = []
+        for target_id in target_ids:
+            if target_id is None:
+                continue
+            filters.append({"_id": target_id})
+
+        if email:
+            filters.append({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
+
+        if not filters:
+            continue
+
+        cursor = current_collection.find({"$or": filters}, {"_id": 1})
+        matches = await cursor.to_list(length=None)
+        matched_ids_by_collection[current_collection] = [match["_id"] for match in matches if match.get("_id") is not None]
+
+    deleted_count = 0
+    for current_collection, matched_ids in matched_ids_by_collection.items():
+        if not matched_ids:
+            continue
+        result = await current_collection.delete_many({"_id": {"$in": matched_ids}})
+        deleted_count += result.deleted_count
+
+    if deleted_count == 0:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return {"message": "User deleted"}
+
+
 @router.get("/users", response_model=List[UserResponse])
 async def list_users(_: UserResponse = Depends(require_superadmin)):
     users_by_email: dict[str, dict[str, Any]] = {}
@@ -206,6 +253,18 @@ async def update_user_role_patch(
     current_user: UserResponse = Depends(require_superadmin),
 ):
     return await _update_user_role_impl(user_id, payload, current_user)
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    current_user: UserResponse = Depends(require_superadmin),
+):
+    current_user_id = str(current_user.id or "")
+    if current_user_id and current_user_id == user_id:
+        raise HTTPException(status_code=403, detail="You cannot delete your own account")
+
+    return await _delete_user_documents(user_id)
 
 
 @router.get("/access-rules")
