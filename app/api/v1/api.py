@@ -9,6 +9,7 @@ from app.api.endpoints import auth
 from app.api.endpoints import admin
 from app.api.endpoints import bag
 from app.api.endpoints import blogs
+from app.api.endpoints import imports
 from app.api.endpoints import notifications
 from app.ml.router import router as energy_router
 from app.chat.router import router as chat_router
@@ -23,6 +24,7 @@ api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(blogs.router, prefix="/blogs", tags=["blogs"])
 api_router.include_router(bag.router, prefix="/bag", tags=["bag"])
+api_router.include_router(imports.router, prefix="/imports", tags=["imports"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(energy_router, prefix="/energy", tags=["energy"])
 api_router.include_router(chat_router, prefix="/chat", tags=["chat"])
