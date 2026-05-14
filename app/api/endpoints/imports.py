@@ -83,6 +83,13 @@ class SectionDefinition(BaseModel):
     category_type: str
 
 
+class DeleteImportPayload(BaseModel):
+    section_key: str
+    category: str
+    file_name: str
+    created_at: Optional[str] = None
+
+
 def require_superadmin(current_user: UserResponse = Depends(get_current_user)) -> UserResponse:
     if current_user.role != "superadmin":
         raise HTTPException(status_code=403, detail="Superadmin access required")
@@ -113,6 +120,20 @@ def _serialize_import(document: dict[str, Any]) -> dict[str, Any]:
     item["created_at"] = _serialize_datetime(item.get("created_at"))
     item["updated_at"] = _serialize_datetime(item.get("updated_at"))
     return item
+
+
+def _build_delete_filter(payload: DeleteImportPayload) -> dict[str, Any]:
+    delete_filter: dict[str, Any] = {
+        "section_key": payload.section_key,
+        "category": payload.category.strip(),
+        "file_name": payload.file_name.strip(),
+    }
+    if payload.created_at:
+        try:
+            delete_filter["created_at"] = datetime.fromisoformat(payload.created_at.replace("Z", "+00:00"))
+        except ValueError:
+            delete_filter["created_at"] = payload.created_at
+    return delete_filter
 
 
 def _parse_float(value: Any, default: Optional[float] = None) -> Optional[float]:
@@ -235,6 +256,17 @@ async def list_import_history(_: UserResponse = Depends(require_superadmin)):
     cursor = _imports_collection().find({}).sort("created_at", -1)
     items = await cursor.to_list(length=100)
     return [_serialize_import(item) for item in items]
+
+
+@router.post("/delete")
+async def delete_import_record_by_match(
+    payload: DeleteImportPayload, _: UserResponse = Depends(require_superadmin)
+):
+    delete_filter = _build_delete_filter(payload)
+    result = await _imports_collection().delete_one(delete_filter)
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Imported file not found")
+    return {"message": "Imported file deleted"}
 
 
 @router.delete("/{import_id}")
