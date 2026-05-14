@@ -167,6 +167,35 @@ class TestImportEndpoints:
         assert response.status_code == 200
         assert response.json()["category"] == "Réfrigérateur"
 
+    def test_public_can_read_para_imported_section_data_with_bebe_category_alias(self, client):
+        imports_collection = MagicMock()
+        imports_collection.find_one = AsyncMock(
+            return_value={
+                "_id": "import-3",
+                "section_key": "parapharmacie_showcase",
+                "section_label": "Parapharmacy showcase",
+                "source": "para",
+                "category": "Maman & BÃ©bÃ©",
+                "category_type": "top_category",
+                "file_name": "baby.csv",
+                "imported_count": 1,
+                "replace_existing": True,
+                "imported_by_email": "superadmin@example.com",
+                "created_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc),
+                "products": [],
+            }
+        )
+
+        with patch("app.api.endpoints.imports._imports_collection", return_value=imports_collection):
+            response = client.get(
+                f"{IMPORTS_BASE}/section-data",
+                params={"section_key": "parapharmacie_showcase", "category": "Maman & Bébé"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["category"] == "Maman & BÃ©bÃ©"
+
     def test_superadmin_can_delete_existing_import(self, client):
         users_collection = MagicMock()
         users_collection.find_one = AsyncMock(return_value=_make_user("superadmin@example.com"))
