@@ -137,3 +137,32 @@ class TestImportEndpoints:
 
         assert response.status_code == 200
         assert response.json()["section_label"] == "Appliance showcase"
+
+    def test_public_can_read_imported_section_data_with_category_alias(self, client):
+        imports_collection = MagicMock()
+        imports_collection.find_one = AsyncMock(
+            return_value={
+                "_id": "import-2",
+                "section_key": "appliance_showcase",
+                "section_label": "Appliance showcase",
+                "source": "retail",
+                "category": "Réfrigérateur",
+                "category_type": "top_category",
+                "file_name": "fridge.csv",
+                "imported_count": 1,
+                "replace_existing": True,
+                "imported_by_email": "superadmin@example.com",
+                "created_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc),
+                "products": [],
+            }
+        )
+
+        with patch("app.api.endpoints.imports._imports_collection", return_value=imports_collection):
+            response = client.get(
+                f"{IMPORTS_BASE}/section-data",
+                params={"section_key": "appliance_showcase", "category": "RÃ©frigÃ©rateur"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["category"] == "Réfrigérateur"

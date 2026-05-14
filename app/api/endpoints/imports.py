@@ -29,6 +29,13 @@ IMPORT_SECTIONS: dict[str, dict[str, str]] = {
     },
 }
 
+CATEGORY_ALIASES: dict[str, list[str]] = {
+    "Réfrigérateur": ["Réfrigérateur", "RÃ©frigÃ©rateur"],
+    "RÃ©frigÃ©rateur": ["Réfrigérateur", "RÃ©frigÃ©rateur"],
+    "Machine à Laver": ["Machine à Laver", "Machine Ã  Laver"],
+    "Machine Ã  Laver": ["Machine à Laver", "Machine Ã  Laver"],
+}
+
 
 class ImportedShopPrice(BaseModel):
     shop: str
@@ -84,6 +91,12 @@ def require_superadmin(current_user: UserResponse = Depends(get_current_user)) -
 
 def _imports_collection():
     return get_auth_database()["content_imports"]
+
+
+def _category_candidates(category: str):
+    cleaned = category.strip()
+    aliases = CATEGORY_ALIASES.get(cleaned, [cleaned])
+    return list(dict.fromkeys([item.strip() for item in aliases if item and item.strip()]))
 
 
 def _serialize_datetime(value: Any):
@@ -209,7 +222,7 @@ async def list_import_sections():
 @router.get("/section-data", response_model=Optional[ImportedContentRecord])
 async def get_imported_section_data(section_key: str, category: str):
     document = await _imports_collection().find_one(
-        {"section_key": section_key, "category": category},
+        {"section_key": section_key, "category": {"$in": _category_candidates(category)}},
         sort=[("created_at", -1)],
     )
     if not document:
@@ -222,6 +235,20 @@ async def list_import_history(_: UserResponse = Depends(require_superadmin)):
     cursor = _imports_collection().find({}).sort("created_at", -1)
     items = await cursor.to_list(length=100)
     return [_serialize_import(item) for item in items]
+
+
+@router.delete("/{import_id}")
+async def delete_import_record(import_id: str, _: UserResponse = Depends(require_superadmin)):
+    target_ids: list[Any] = [import_id]
+    try:
+        target_ids.insert(0, ObjectId(import_id))
+    except Exception:
+        pass
+
+    result = await _imports_collection().delete_one({"_id": {"$in": target_ids}})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Imported file not found")
+    return {"message": "Imported file deleted"}
 
 
 @router.post("/upload", response_model=ImportedContentRecord)
