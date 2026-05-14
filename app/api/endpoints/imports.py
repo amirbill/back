@@ -1,5 +1,6 @@
 import csv
 import io
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
@@ -14,7 +15,7 @@ from app.schemas.auth import UserResponse
 router = APIRouter()
 
 ImportSource = Literal["retail", "para"]
-ImportSectionKey = Literal["home_trending", "appliance_showcase"]
+ImportSectionKey = Literal["home_trending", "appliance_showcase", "parapharmacie_showcase"]
 
 IMPORT_SECTIONS: dict[str, dict[str, str]] = {
     "home_trending": {
@@ -25,6 +26,11 @@ IMPORT_SECTIONS: dict[str, dict[str, str]] = {
     "appliance_showcase": {
         "label": "Appliance showcase",
         "source": "retail",
+        "category_type": "top_category",
+    },
+    "parapharmacie_showcase": {
+        "label": "Parapharmacy showcase",
+        "source": "para",
         "category_type": "top_category",
     },
 }
@@ -98,6 +104,12 @@ def require_superadmin(current_user: UserResponse = Depends(get_current_user)) -
 
 def _imports_collection():
     return get_auth_database()["content_imports"]
+
+
+def _normalize_category(category: str):
+    normalized = unicodedata.normalize("NFKD", category.strip().lower())
+    ascii_like = "".join(character for character in normalized if not unicodedata.combining(character))
+    return "".join(character for character in ascii_like if character.isalnum())
 
 
 def _category_candidates(category: str):
@@ -179,7 +191,11 @@ def _parse_shop_prices(row: dict[str, Any], product_url: Optional[str]) -> list[
     return prices
 
 
-def _build_imported_products(csv_text: str, category: str) -> list[dict[str, Any]]:
+def _fallback_availability_label(available: bool):
+    return "in_stock" if available else "out_of_stock"
+
+
+def _build_imported_products(csv_text: str, category: str, source: ImportSource) -> list[dict[str, Any]]:
     reader = csv.DictReader(io.StringIO(csv_text))
     if not reader.fieldnames:
         raise HTTPException(status_code=400, detail="CSV file is empty or missing headers")
@@ -195,29 +211,60 @@ def _build_imported_products(csv_text: str, category: str) -> list[dict[str, Any
         if not name:
             continue
 
-        product_url = str(row.get("product_url", "")).strip() or None
+        product_url = str(row.get("product_url", "")).strip() or str(row.get("url", "")).strip() or None
         shop_prices = _parse_shop_prices(row, product_url)
+        available = _parse_bool(row.get("in_stock"), _parse_bool(row.get("available"), True))
         best_price = _parse_float(row.get("best_price"))
+        if best_price is None and source == "para":
+            best_price = _parse_float(row.get("price"))
         if best_price is None and shop_prices:
             best_price = min(price["price"] for price in shop_prices)
         if best_price is None:
             raise HTTPException(status_code=400, detail=f"Row {row_index} is missing a valid best_price")
 
-        product_id = str(ObjectId())
+        if source == "para" and not shop_prices:
+            default_shop = str(row.get("shop", "")).strip()
+            if default_shop:
+                shop_prices = [
+                    {
+                        "shop": default_shop,
+                        "price": best_price,
+                        "oldPrice": _parse_float(row.get("old_price")) or _parse_float(row.get("original_price")),
+                        "available": available,
+                        "url": product_url,
+                    }
+                ]
+
+        category_value = str(row.get("category", "")).strip() or category
+        if source == "para":
+            category_value = (
+                str(row.get("top_category", "")).strip()
+                or str(row.get("subcategory", "")).strip()
+                or str(row.get("low_category", "")).strip()
+                or category
+            )
+
+        product_id = str(row.get("id", "")).strip() or str(ObjectId())
         products.append(
             {
                 "id": product_id,
                 "name": name,
                 "brand": str(row.get("brand", "")).strip() or "Produit",
                 "bestPrice": best_price,
-                "originalPrice": _parse_float(row.get("original_price")),
+                "originalPrice": _parse_float(row.get("original_price")) or _parse_float(row.get("old_price")),
                 "image": str(row.get("image", "")).strip() or "/images/item-cart.png",
                 "description": str(row.get("description", "")).strip() or name,
-                "inStock": _parse_bool(row.get("in_stock"), True),
-                "category": str(row.get("category", "")).strip() or category,
+                "inStock": available,
+                "category": category_value,
                 "href": product_url,
                 "shopPrices": shop_prices,
-                "specifications": None,
+                "specifications": {
+                    "source": source,
+                    "availability": str(row.get("availability", "")).strip() or _fallback_availability_label(available),
+                    "top_category": str(row.get("top_category", "")).strip() or None,
+                    "low_category": str(row.get("low_category", "")).strip() or None,
+                    "subcategory": str(row.get("subcategory", "")).strip() or None,
+                },
             }
         )
 
@@ -242,8 +289,15 @@ async def list_import_sections():
 
 @router.get("/section-data", response_model=Optional[ImportedContentRecord])
 async def get_imported_section_data(section_key: str, category: str):
+    normalized_category = _normalize_category(category)
     document = await _imports_collection().find_one(
-        {"section_key": section_key, "category": {"$in": _category_candidates(category)}},
+        {
+            "section_key": section_key,
+            "$or": [
+                {"category": {"$in": _category_candidates(category)}},
+                {"normalized_category": normalized_category},
+            ],
+        },
         sort=[("created_at", -1)],
     )
     if not document:
@@ -305,17 +359,27 @@ async def upload_import_file(
     except UnicodeDecodeError:
         raise HTTPException(status_code=400, detail="CSV file must be UTF-8 encoded")
 
-    products = _build_imported_products(csv_text, category.strip())
+    normalized_category = _normalize_category(category)
+    products = _build_imported_products(csv_text, category.strip(), section_meta["source"])
     now = datetime.now(timezone.utc)
 
     if replace_existing:
-        await _imports_collection().delete_many({"section_key": section_key, "category": category.strip()})
+        await _imports_collection().delete_many(
+            {
+                "section_key": section_key,
+                "$or": [
+                    {"category": category.strip()},
+                    {"normalized_category": normalized_category},
+                ],
+            }
+        )
 
     document = {
         "section_key": section_key,
         "section_label": section_meta["label"],
         "source": section_meta["source"],
         "category": category.strip(),
+        "normalized_category": normalized_category,
         "category_type": section_meta["category_type"],
         "file_name": file_name,
         "imported_count": len(products),
