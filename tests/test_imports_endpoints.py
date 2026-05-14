@@ -190,7 +190,7 @@ class TestImportEndpoints:
         with patch("app.api.endpoints.imports._imports_collection", return_value=imports_collection):
             response = client.get(
                 f"{IMPORTS_BASE}/section-data",
-                params={"section_key": "parapharmacie_showcase", "category": "Maman & Bébé"},
+                params={"section_key": "parapharmacie_showcase", "category": "Bébé"},
             )
 
         assert response.status_code == 200

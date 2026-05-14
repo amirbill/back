@@ -40,8 +40,10 @@ CATEGORY_ALIASES: dict[str, list[str]] = {
     "RÃ©frigÃ©rateur": ["Réfrigérateur", "RÃ©frigÃ©rateur"],
     "Machine à Laver": ["Machine à Laver", "Machine Ã  Laver"],
     "Machine Ã  Laver": ["Machine à Laver", "Machine Ã  Laver"],
-    "Maman & Bébé": ["Maman & Bébé", "Maman & BÃ©bÃ©"],
-    "Maman & BÃ©bÃ©": ["Maman & Bébé", "Maman & BÃ©bÃ©"],
+    "Maman & Bébé": ["Maman & Bébé", "Maman & BÃ©bÃ©", "Bébé", "BÃ©bÃ©"],
+    "Maman & BÃ©bÃ©": ["Maman & Bébé", "Maman & BÃ©bÃ©", "Bébé", "BÃ©bÃ©"],
+    "Bébé": ["Bébé", "BÃ©bÃ©", "Maman & Bébé", "Maman & BÃ©bÃ©"],
+    "BÃ©bÃ©": ["Bébé", "BÃ©bÃ©", "Maman & Bébé", "Maman & BÃ©bÃ©"],
     "Hygiène": ["Hygiène", "HygiÃ¨ne"],
     "HygiÃ¨ne": ["Hygiène", "HygiÃ¨ne"],
 }
