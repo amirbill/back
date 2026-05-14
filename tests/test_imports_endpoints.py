@@ -166,3 +166,28 @@ class TestImportEndpoints:
 
         assert response.status_code == 200
         assert response.json()["category"] == "Réfrigérateur"
+
+    def test_superadmin_can_delete_existing_import(self, client):
+        users_collection = MagicMock()
+        users_collection.find_one = AsyncMock(return_value=_make_user("superadmin@example.com"))
+
+        imports_collection = MagicMock()
+        imports_collection.delete_one = AsyncMock(return_value=MagicMock(deleted_count=1))
+
+        auth_db = MagicMock()
+        auth_db.users = users_collection
+        auth_db.__getitem__.side_effect = lambda key: {
+            "users": users_collection,
+            "content_imports": imports_collection,
+        }[key]
+
+        with _override_auth_db(auth_db), patch(
+            "app.api.endpoints.imports._imports_collection", return_value=imports_collection
+        ):
+            response = client.delete(
+                f"{IMPORTS_BASE}/existing-import-id",
+                headers=_auth_header("superadmin@example.com"),
+            )
+
+        assert response.status_code == 200
+        assert response.json()["message"] == "Imported file deleted"
