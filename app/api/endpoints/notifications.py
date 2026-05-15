@@ -23,7 +23,7 @@ class NotificationPayload(BaseModel):
 
 
 class NotificationResponse(BaseModel):
-    _id: str
+    id: str = Field(alias="_id", serialization_alias="_id")
     text: str
     product_id: Optional[str] = None
     product_name: str
@@ -33,6 +33,8 @@ class NotificationResponse(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     is_read: bool = False
+
+    model_config = {"populate_by_name": True}
 
 
 def require_superadmin(current_user: UserResponse = Depends(get_current_user)) -> UserResponse:

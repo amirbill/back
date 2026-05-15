@@ -85,6 +85,7 @@ class TestNotificationEndpoints:
 
         assert response.status_code == 200
         body = response.json()
+        assert body["_id"] == "notif-1"
         assert body["product_name"] == "Produit test"
         assert body["audience_roles"] == ["client", "admin"]
 
@@ -131,6 +132,7 @@ class TestNotificationEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert len(body) == 1
+        assert body[0]["_id"] == "notif-1"
         assert body[0]["is_read"] is False
 
     def test_mark_notification_as_read_updates_read_by(self, client):
