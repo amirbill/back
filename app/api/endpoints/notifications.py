@@ -61,6 +61,7 @@ def _serialize_notification(document: dict[str, Any], current_email: Optional[st
     read_by = [str(email).strip().lower() for email in item.get("read_by", []) if str(email).strip()]
     item["is_read"] = bool(current_email and current_email.strip().lower() in read_by)
     item.pop("read_by", None)
+    item.pop("dismissed_by", None)
     return item
 
 
@@ -70,7 +71,13 @@ async def list_my_notifications(current_user: UserResponse = Depends(get_current
     if user_role not in {"client", "admin"}:
         return []
 
-    cursor = _notifications_collection().find({"audience_roles": user_role}).sort("created_at", -1)
+    email = current_user.email.strip().lower()
+    cursor = _notifications_collection().find(
+        {
+            "audience_roles": user_role,
+            "dismissed_by": {"$ne": email},
+        }
+    ).sort("created_at", -1)
     notifications = await cursor.to_list(length=50)
     return [_serialize_notification(item, current_user.email) for item in notifications]
 
@@ -132,3 +139,40 @@ async def mark_notification_as_read(
     if not saved:
         raise HTTPException(status_code=404, detail="Notification not found")
     return _serialize_notification(saved, current_user.email)
+
+
+@router.delete("/{notification_id}")
+async def delete_notification(
+    notification_id: str,
+    current_user: UserResponse = Depends(get_current_user),
+):
+    target_id: Any = notification_id
+    try:
+        target_id = ObjectId(notification_id)
+    except Exception:
+        target_id = notification_id
+
+    if current_user.role == "superadmin":
+        result = await _notifications_collection().delete_one({"_id": target_id})
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Notification not found")
+        return {"message": "Notification deleted"}
+
+    user_role = (current_user.role or "client").strip().lower()
+    if user_role not in {"client", "admin"}:
+        raise HTTPException(status_code=403, detail="Notification delete not allowed for this role")
+
+    email = current_user.email.strip().lower()
+    result = await _notifications_collection().update_one(
+        {
+            "_id": target_id,
+            "audience_roles": user_role,
+        },
+        {
+            "$addToSet": {"dismissed_by": email},
+            "$set": {"updated_at": datetime.now(timezone.utc)},
+        },
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return {"message": "Notification dismissed"}

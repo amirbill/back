@@ -171,3 +171,55 @@ class TestNotificationEndpoints:
 
         assert response.status_code == 200
         assert response.json()["is_read"] is True
+
+    def test_superadmin_can_delete_broadcast_notification(self, client):
+        users_collection = MagicMock()
+        users_collection.find_one = AsyncMock(return_value=_make_user("superadmin@example.com", role="superadmin"))
+
+        notifications_collection = MagicMock()
+        notifications_collection.delete_one = AsyncMock(return_value=MagicMock(deleted_count=1))
+
+        auth_db = MagicMock()
+        auth_db.users = users_collection
+        auth_db.__getitem__.side_effect = lambda key: {
+            "users": users_collection,
+            "notifications": notifications_collection,
+        }[key]
+
+        with _override_auth_db(auth_db), patch(
+            "app.api.endpoints.notifications._notifications_collection", return_value=notifications_collection
+        ):
+            response = client.delete(
+                f"{NOTIFICATIONS_BASE}/notif-1",
+                headers=_auth_header("superadmin@example.com"),
+            )
+
+        assert response.status_code == 200
+        assert response.json()["message"] == "Notification deleted"
+        notifications_collection.delete_one.assert_awaited_once_with({"_id": "notif-1"})
+
+    def test_user_can_dismiss_notification(self, client):
+        users_collection = MagicMock()
+        users_collection.find_one = AsyncMock(return_value=_make_user("client@example.com", role="client"))
+
+        notifications_collection = MagicMock()
+        notifications_collection.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
+
+        auth_db = MagicMock()
+        auth_db.users = users_collection
+        auth_db.__getitem__.side_effect = lambda key: {
+            "users": users_collection,
+            "notifications": notifications_collection,
+        }[key]
+
+        with _override_auth_db(auth_db), patch(
+            "app.api.endpoints.notifications._notifications_collection", return_value=notifications_collection
+        ):
+            response = client.delete(
+                f"{NOTIFICATIONS_BASE}/notif-1",
+                headers=_auth_header("client@example.com"),
+            )
+
+        assert response.status_code == 200
+        assert response.json()["message"] == "Notification dismissed"
+        notifications_collection.update_one.assert_awaited_once()
